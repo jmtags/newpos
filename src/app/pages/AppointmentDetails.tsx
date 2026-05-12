@@ -12,7 +12,7 @@ interface AppointmentDetailsProps {
   appointmentId: string | null;
   onBack: () => void;
   onEdit: (appointmentId: string) => void;
-  onOpenTransactions: () => void;
+  onOpenTransactions: (transactionId: string) => void;
 }
 
 const formatCurrency = (amount: number) =>
@@ -84,11 +84,12 @@ export const AppointmentDetails: React.FC<AppointmentDetailsProps> = ({
 
     try {
       setBusy(true);
-      await appointmentService.createPOSTransactionFromAppointment(appointment.id);
+      const result =
+        await appointmentService.createPOSTransactionFromAppointment(appointment.id);
       await loadAppointment();
       await refreshData();
       alert('POS transaction created and linked to this appointment.');
-      onOpenTransactions();
+      onOpenTransactions(result.transaction.id);
     } catch (error: any) {
       alert(`Error creating POS transaction: ${error.message}`);
     } finally {
@@ -223,7 +224,7 @@ export const AppointmentDetails: React.FC<AppointmentDetailsProps> = ({
               variant="outline"
               onClick={async () => {
                 await refreshData();
-                onOpenTransactions();
+                onOpenTransactions(appointment.transaction_id);
               }}
             >
               Open Transactions

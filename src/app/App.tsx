@@ -35,6 +35,8 @@ export default function App() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | null>(null);
+  const [highlightedTransactionId, setHighlightedTransactionId] =
+    useState<string | null>(null);
   const [appointmentReturnPage, setAppointmentReturnPage] =
     useState<AppointmentReturnPage>('appointments');
   const [schedulingCalendarState, setSchedulingCalendarState] =
@@ -174,6 +176,9 @@ export default function App() {
 
   const handlePageChange = (page: string) => {
     setCurrentPage(page);
+    if (page !== 'transactions') {
+      setHighlightedTransactionId(null);
+    }
     if (!['appointmentDetails', 'appointmentEdit'].includes(page)) {
       setSelectedAppointmentId(null);
     }
@@ -248,7 +253,12 @@ export default function App() {
         return <Clients />;
 
       case 'transactions':
-        return <Transactions />;
+        return (
+          <Transactions
+            highlightedTransactionId={highlightedTransactionId}
+            onHighlightConsumed={() => setHighlightedTransactionId(null)}
+          />
+        );
 
       case 'services':
         return <Services />;
@@ -333,7 +343,10 @@ export default function App() {
               setSelectedAppointmentId(id);
               setCurrentPage('appointmentEdit');
             }}
-            onOpenTransactions={() => setCurrentPage('transactions')}
+            onOpenTransactions={(transactionId) => {
+              setHighlightedTransactionId(transactionId);
+              setCurrentPage('transactions');
+            }}
           />
         );
 

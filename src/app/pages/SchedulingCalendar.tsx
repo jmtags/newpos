@@ -211,6 +211,15 @@ export const SchedulingCalendar: React.FC<SchedulingCalendarProps> = ({
     });
   };
 
+  const openDailyViewForDate = (dateValue: string) => {
+    setFilters({
+      ...filters,
+      date: dateValue,
+      month: toMonthInputValue(dateValue)
+    });
+    setViewMode('day');
+  };
+
   const updateMonth = (monthValue: string) => {
     const nextDate = `${monthValue}-01`;
     setFilters({
@@ -500,7 +509,21 @@ export const SchedulingCalendar: React.FC<SchedulingCalendarProps> = ({
                   <div className="space-y-1">
                     {dayAppointments.slice(0, 3).map(renderAppointmentPreview)}
                     {dayAppointments.length > 3 && (
-                      <div className="text-xs font-medium text-slate-500">
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openDailyViewForDate(day.dateKey);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openDailyViewForDate(day.dateKey);
+                        }}
+                        className="text-xs font-medium text-teal-700 hover:text-teal-900"
+                      >
                         +{dayAppointments.length - 3} more
                       </div>
                     )}

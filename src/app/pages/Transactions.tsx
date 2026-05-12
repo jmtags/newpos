@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
 import { Input } from '../components/Input';
@@ -71,8 +71,17 @@ const formatScheduledService = (schedule?: any | null) => {
   return [date, time, location].filter(Boolean).join(' | ');
 };
 
-export const Transactions: React.FC = () => {
+interface TransactionsProps {
+  highlightedTransactionId?: string | null;
+  onHighlightConsumed?: () => void;
+}
+
+export const Transactions: React.FC<TransactionsProps> = ({
+  highlightedTransactionId,
+  onHighlightConsumed
+}) => {
   const { transactions, addPayment, refreshData } = useAppContext();
+  const highlightedRowRef = useRef<HTMLTableRowElement | null>(null);
 
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [paymentMethodFilters, setPaymentMethodFilters] = useState<string[]>([]);
@@ -213,6 +222,37 @@ export const Transactions: React.FC = () => {
     startDateFilter,
     endDateFilter
   ]);
+
+  useEffect(() => {
+    if (!highlightedTransactionId) return;
+
+    const highlightedTransaction = transactions.find(
+      (transaction) => transaction.id === highlightedTransactionId
+    );
+
+    if (!highlightedTransaction) return;
+
+    const transactionDate = new Date(highlightedTransaction.transaction_date);
+    setStatusFilters([]);
+    setPaymentMethodFilters([]);
+    setStartDateFilter(toDateInputValue(transactionDate));
+    setEndDateFilter(toDateInputValue(transactionDate));
+  }, [highlightedTransactionId, transactions]);
+
+  useEffect(() => {
+    if (!highlightedTransactionId || !highlightedRowRef.current) return;
+
+    highlightedRowRef.current.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    });
+
+    const timeoutId = window.setTimeout(() => {
+      onHighlightConsumed?.();
+    }, 6000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [filteredTransactions, highlightedTransactionId, onHighlightConsumed]);
 
   const getStatusVariant = (status: string) => {
     if (status === 'Paid') return 'success';
@@ -967,15 +1007,24 @@ export const Transactions: React.FC = () => {
             </thead>
 
             <tbody>
-              {filteredTransactions.map((transaction) => (
-                <tr
-                  key={transaction.id}
-                  className={`border-b border-slate-100 hover:bg-slate-50 ${
-                    transaction.payment_status === 'Void'
-                      ? 'bg-red-50/40 text-slate-500'
-                      : ''
-                  }`}
-                >
+              {filteredTransactions.map((transaction) => {
+                const isHighlighted =
+                  transaction.id === highlightedTransactionId;
+
+                return (
+                  <tr
+                    key={transaction.id}
+                    ref={isHighlighted ? highlightedRowRef : null}
+                    className={`border-b border-slate-100 transition-colors hover:bg-slate-50 ${
+                      transaction.payment_status === 'Void'
+                        ? 'bg-red-50/40 text-slate-500'
+                        : ''
+                    } ${
+                      isHighlighted
+                        ? 'bg-amber-100/80 outline outline-2 outline-amber-400 outline-offset-[-2px]'
+                        : ''
+                    }`}
+                  >
                   <td className="py-3 px-4 text-sm font-medium text-slate-900">
                     {transaction.transaction_number}
                   </td>
@@ -1101,7 +1150,8 @@ export const Transactions: React.FC = () => {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
