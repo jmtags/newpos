@@ -3,6 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.49.8';
 
 type ToolName =
   | 'getTodayAppointments'
+  | 'getAppointmentSummary'
   | 'getAvailableRooms'
   | 'getAssociateAvailability'
   | 'getUnpaidTransactions'
@@ -48,6 +49,7 @@ You help front desk and admin staff with operational questions only.
 
 You may answer about:
 - appointment schedules
+- appointment summaries by date range
 - associate availability
 - room availability
 - unpaid balances
@@ -65,6 +67,10 @@ user to a licensed clinician or emergency protocol.
 Answer in simple front desk/admin language. Be concise, practical, and specific.
 Use the provided source data only. If the data is incomplete, say what is missing.
 Include a short "Source data used" line when useful.
+When the staff question asks for scheduled appointments, appointment summaries,
+bookings, or the clinic calendar, focus on appointment data. Do not include POS
+revenue unless the staff question explicitly asks for revenue, sales, POS,
+collections, payments, refunds, or transactions.
 `;
 
 const jsonResponse = (body: Record<string, unknown>, status = 200) =>
@@ -84,6 +90,33 @@ const addDays = (date: Date, days: number) => {
   return next;
 };
 
+const monthNameToIndex: Record<string, number> = {
+  january: 0,
+  jan: 0,
+  february: 1,
+  feb: 1,
+  march: 2,
+  mar: 2,
+  april: 3,
+  apr: 3,
+  may: 4,
+  june: 5,
+  jun: 5,
+  july: 6,
+  jul: 6,
+  august: 7,
+  aug: 7,
+  september: 8,
+  sep: 8,
+  sept: 8,
+  october: 9,
+  oct: 9,
+  november: 10,
+  nov: 10,
+  december: 11,
+  dec: 11
+};
+
 const getManilaToday = () => {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila',
@@ -98,12 +131,28 @@ const getManilaToday = () => {
 const parseDateRange = (message: string) => {
   const lower = message.toLowerCase();
   const explicitDate = lower.match(/\b(20\d{2}-\d{2}-\d{2})\b/);
+  const explicitMonth = lower.match(
+    /\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sept|sep|october|oct|november|nov|december|dec)\s+(20\d{2})\b/
+  );
 
   if (explicitDate) {
     return {
       startDate: explicitDate[1],
       endDate: explicitDate[1],
       label: explicitDate[1]
+    };
+  }
+
+  if (explicitMonth) {
+    const monthIndex = monthNameToIndex[explicitMonth[1]];
+    const year = Number(explicitMonth[2]);
+    const start = new Date(year, monthIndex, 1);
+    const end = new Date(year, monthIndex + 1, 0);
+
+    return {
+      startDate: toDateValue(start),
+      endDate: toDateValue(end),
+      label: `${explicitMonth[1]} ${year}`
     };
   }
 
@@ -202,12 +251,26 @@ const parseTimeRange = (message: string) => {
 const containsClinicalRequest = (message: string) =>
   clinicalRequestPatterns.some((pattern) => pattern.test(message));
 
+const isAppointmentIntent = (message: string) =>
+  /\b(appointment|appointments|schedule|scheduled|scheduling|calendar|booking|bookings)\b/i.test(
+    message
+  );
+
+const isRevenueIntent = (message: string) =>
+  /\b(revenue|sales|income|pos|collection|collected|gross|net|refund|refunds|transaction|transactions|payment total|payments collected)\b/i.test(
+    message
+  ) ||
+  /\b(daily|monthly|yearly)?\s*(revenue|sales|income|pos)\s*summary\b/i.test(
+    message
+  );
+
 const chooseTools = (message: string): ToolName[] => {
   const lower = message.toLowerCase();
   const tools = new Set<ToolName>();
+  const appointmentIntent = isAppointmentIntent(message);
 
-  if (/appointment|schedule|calendar|booking/.test(lower)) {
-    tools.add('getTodayAppointments');
+  if (appointmentIntent) {
+    tools.add('getAppointmentSummary');
   }
 
   if (/room/.test(lower)) {
@@ -222,7 +285,7 @@ const chooseTools = (message: string): ToolName[] => {
     tools.add('getUnpaidTransactions');
   }
 
-  if (/revenue|sales|income|pos|collection|collected|daily summary|summary/.test(lower)) {
+  if (isRevenueIntent(message)) {
     tools.add('getRevenueSummary');
   }
 
@@ -235,7 +298,7 @@ const chooseTools = (message: string): ToolName[] => {
   }
 
   if (/daily clinic summary|clinic summary|today summary|how are we doing/.test(lower)) {
-    tools.add('getTodayAppointments');
+    tools.add('getAppointmentSummary');
     tools.add('getRevenueSummary');
     tools.add('getUnpaidTransactions');
   }
@@ -436,6 +499,18 @@ serve(async (req) => {
       await runRpc(tool, `Appointments for ${range.label}`, 'ai_get_today_appointments', {
         target_date: range.startDate
       });
+    }
+
+    if (tool === 'getAppointmentSummary') {
+      await runRpc(
+        tool,
+        `Appointment summary for ${range.label}`,
+        'ai_get_appointment_summary',
+        {
+          start_date: range.startDate,
+          end_date: range.endDate
+        }
+      );
     }
 
     if (tool === 'getAvailableRooms') {

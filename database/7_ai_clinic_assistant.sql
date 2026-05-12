@@ -126,6 +126,97 @@ begin
 end;
 $$;
 
+create or replace function public.ai_get_appointment_summary(
+  start_date date,
+  end_date date
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.ai_can_use_assistant(auth.uid()) then
+    raise exception 'Not authorized to use AI assistant.';
+  end if;
+
+  return coalesce((
+    with filtered as (
+      select
+        a.id,
+        a.appointment_date,
+        a.start_time,
+        a.end_time,
+        a.status,
+        a.appointment_type,
+        a.payment_status,
+        a.amount_due,
+        a.amount_paid,
+        c.full_name as client_name,
+        s.name as service_name,
+        mha.full_name as associate_name,
+        r.room_name,
+        ref.referral_name
+      from public.appointments a
+      left join public.clients c on c.id = a.client_id
+      left join public.services s on s.id = a.service_id
+      left join public.mental_health_associates mha on mha.id = a.associate_id
+      left join public.rooms r on r.id = a.room_id
+      left join public.referrals ref on ref.id = a.referral_id
+      where a.appointment_date between start_date and end_date
+        and a.status <> 'Cancelled'
+    ),
+    by_status as (
+      select jsonb_object_agg(status, count) as counts
+      from (
+        select status, count(*) as count
+        from filtered
+        group by status
+      ) rows
+    ),
+    by_date as (
+      select jsonb_agg(to_jsonb(rows) order by rows.appointment_date) as dates
+      from (
+        select
+          appointment_date,
+          count(*) as appointment_count
+        from filtered
+        group by appointment_date
+      ) rows
+    ),
+    by_associate as (
+      select jsonb_agg(to_jsonb(rows) order by rows.appointment_count desc, rows.associate_name) as associates
+      from (
+        select
+          coalesce(associate_name, 'Unassigned') as associate_name,
+          count(*) as appointment_count
+        from filtered
+        group by coalesce(associate_name, 'Unassigned')
+      ) rows
+    ),
+    details as (
+      select jsonb_agg(to_jsonb(rows) order by rows.appointment_date, rows.start_time) as appointments
+      from (
+        select *
+        from filtered
+        order by appointment_date, start_time
+        limit 50
+      ) rows
+    )
+    select jsonb_build_object(
+      'start_date', start_date,
+      'end_date', end_date,
+      'appointment_count', (select count(*) from filtered),
+      'status_counts', coalesce((select counts from by_status), '{}'::jsonb),
+      'appointments_by_date', coalesce((select dates from by_date), '[]'::jsonb),
+      'appointments_by_associate', coalesce((select associates from by_associate), '[]'::jsonb),
+      'appointments', coalesce((select appointments from details), '[]'::jsonb)
+    )
+  ), '{}'::jsonb);
+end;
+$$;
+
 create or replace function public.ai_get_available_rooms(
   target_date date default ((now() at time zone 'Asia/Manila')::date),
   start_at time default null,
@@ -413,6 +504,7 @@ end;
 $$;
 
 revoke all on function public.ai_get_today_appointments(date) from public;
+revoke all on function public.ai_get_appointment_summary(date, date) from public;
 revoke all on function public.ai_get_available_rooms(date, time, time) from public;
 revoke all on function public.ai_get_associate_availability(date, uuid) from public;
 revoke all on function public.ai_get_unpaid_transactions(integer) from public;
@@ -421,6 +513,7 @@ revoke all on function public.ai_get_referral_summary(date, date) from public;
 revoke all on function public.ai_get_service_performance(date, date) from public;
 
 grant execute on function public.ai_get_today_appointments(date) to authenticated;
+grant execute on function public.ai_get_appointment_summary(date, date) to authenticated;
 grant execute on function public.ai_get_available_rooms(date, time, time) to authenticated;
 grant execute on function public.ai_get_associate_availability(date, uuid) to authenticated;
 grant execute on function public.ai_get_unpaid_transactions(integer) to authenticated;
