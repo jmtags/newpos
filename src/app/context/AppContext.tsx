@@ -40,6 +40,7 @@ export interface Service {
   description: string;
   default_price: number;
   duration_minutes: number;
+  requires_case_management: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;

@@ -21,6 +21,7 @@ export const Services: React.FC = () => {
     description: '',
     default_price: 0,
     duration_minutes: 60,
+    requires_case_management: false,
     is_active: true
   });
 
@@ -40,6 +41,7 @@ export const Services: React.FC = () => {
       description: '',
       default_price: 0,
       duration_minutes: 60,
+      requires_case_management: false,
       is_active: true
     });
     setIsEditMode(false);
@@ -53,6 +55,7 @@ export const Services: React.FC = () => {
       description: service.description,
       default_price: service.default_price,
       duration_minutes: service.duration_minutes,
+      requires_case_management: Boolean(service.requires_case_management),
       is_active: service.is_active
     });
     setSelectedService(service);
@@ -121,6 +124,11 @@ export const Services: React.FC = () => {
               </div>
               <h4 className="font-semibold text-slate-900 mb-2">{service.name}</h4>
               <p className="text-sm text-slate-600 mb-3">{service.description}</p>
+              {service.requires_case_management && (
+                <Badge variant="warning" className="mb-3">
+                  Case management
+                </Badge>
+              )}
               <div className="flex justify-between items-center text-sm">
                 <span className="font-semibold text-teal-600">
                   ₱{service.default_price.toLocaleString()}
@@ -154,6 +162,11 @@ export const Services: React.FC = () => {
                   </button>
                 </div>
                 <h4 className="font-semibold text-slate-900 mb-2">{service.name}</h4>
+                {service.requires_case_management && (
+                  <Badge variant="warning" className="mb-3">
+                    Case management
+                  </Badge>
+                )}
                 <div className="flex justify-between items-center text-sm">
                   <span className="font-semibold text-slate-600">
                     ₱{service.default_price.toLocaleString()}
@@ -217,6 +230,22 @@ export const Services: React.FC = () => {
               className="rounded border-slate-300"
             />
             <span className="text-sm text-slate-700">Active</span>
+          </label>
+          <label className="flex items-start gap-2">
+            <input
+              type="checkbox"
+              checked={formData.requires_case_management}
+              onChange={e =>
+                setFormData({
+                  ...formData,
+                  requires_case_management: e.target.checked
+                })
+              }
+              className="mt-1 rounded border-slate-300"
+            />
+            <span className="text-sm text-slate-700">
+              Create a case automatically when this service is sold
+            </span>
           </label>
           <Button onClick={handleSaveService} className="w-full">
             {isEditMode ? 'Update Service' : 'Add Service'}
