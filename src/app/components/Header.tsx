@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, ChevronDown, LogOut, Menu, User } from 'lucide-react';
+import { Bell, ChevronDown, KeyRound, LogOut, Menu, User } from 'lucide-react';
 import { roleLabels } from '../lib/accessControl';
 import type { AppUser } from '../services/userService';
 
@@ -8,13 +8,15 @@ interface HeaderProps {
   onMobileMenuToggle: () => void;
   currentUser: AppUser | null;
   onLogout: () => void | Promise<void>;
+  onChangePassword: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   title,
   onMobileMenuToggle,
   currentUser,
-  onLogout
+  onLogout,
+  onChangePassword
 }) => {
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -51,6 +53,11 @@ export const Header: React.FC<HeaderProps> = ({
   const handleLogout = async () => {
     setIsUserMenuOpen(false);
     await onLogout();
+  };
+
+  const handleChangePassword = () => {
+    setIsUserMenuOpen(false);
+    onChangePassword();
   };
 
   return (
@@ -106,6 +113,16 @@ export const Header: React.FC<HeaderProps> = ({
                   {currentUser?.email || displayRole}
                 </p>
               </div>
+
+              <button
+                type="button"
+                onClick={handleChangePassword}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                role="menuitem"
+              >
+                <KeyRound className="w-4 h-4" />
+                <span>Change Password</span>
+              </button>
 
               <button
                 type="button"

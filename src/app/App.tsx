@@ -33,6 +33,13 @@ import {
 
 type AppointmentReturnPage = 'appointments' | 'scheduleCalendar';
 
+const hasPasswordRecoveryUrl = () => {
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+
+  return searchParams.get('type') === 'recovery' || hashParams.get('type') === 'recovery';
+};
+
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
@@ -89,8 +96,10 @@ export default function App() {
     const loadSession = async () => {
       const { data } = await supabase.auth.getSession();
       const session = data.session;
+      const isRecoveryLink = hasPasswordRecoveryUrl();
 
       setIsLoggedIn(Boolean(session));
+      setIsPasswordRecovery(isRecoveryLink);
       await loadCurrentUser(session?.user.id, session?.user.email);
       setCheckingSession(false);
     };
@@ -410,6 +419,7 @@ export default function App() {
             onMobileMenuToggle={toggleMobileSidebar}
             currentUser={currentUser}
             onLogout={handleLogout}
+            onChangePassword={() => setIsPasswordRecovery(true)}
           />
 
           <main className="flex-1 overflow-y-auto p-6">

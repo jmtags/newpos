@@ -142,7 +142,7 @@ export const UserManagement: React.FC = () => {
   const sendPasswordReset = async (email: string) => {
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: window.location.origin
+        redirectTo: `${window.location.origin}/?type=recovery`
       });
 
       if (error) throw error;
