@@ -95,6 +95,7 @@ create table if not exists public.mental_health_associates (
   contact_number text,
   email text,
   license_number text,
+  notes text,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
