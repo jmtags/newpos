@@ -12,6 +12,7 @@ export const Services: React.FC = () => {
   const { services, addService, updateService } = useAppContext();
   const [showAddModal, setShowAddModal] = useState(false);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
+  const [serviceToArchive, setServiceToArchive] = useState<Service | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -73,6 +74,13 @@ export const Services: React.FC = () => {
     updateService(service.id, { is_active: !service.is_active });
   };
 
+  const handleConfirmArchiveService = () => {
+    if (!serviceToArchive) return;
+
+    handleArchiveService(serviceToArchive);
+    setServiceToArchive(null);
+  };
+
   const activeServices = services.filter(s => s.is_active);
   const archivedServices = services.filter(s => !s.is_active);
 
@@ -103,8 +111,9 @@ export const Services: React.FC = () => {
                     <Edit className="w-4 h-4" />
                   </button>
                   <button
-                    onClick={() => handleArchiveService(service)}
+                    onClick={() => setServiceToArchive(service)}
                     className="p-1 text-slate-600 hover:bg-slate-50 rounded"
+                    aria-label={`Archive ${service.name}`}
                   >
                     <Archive className="w-4 h-4" />
                   </button>
@@ -212,6 +221,39 @@ export const Services: React.FC = () => {
           <Button onClick={handleSaveService} className="w-full">
             {isEditMode ? 'Update Service' : 'Add Service'}
           </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(serviceToArchive)}
+        onClose={() => setServiceToArchive(null)}
+        title="Archive Service?"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Are you sure you want to archive{' '}
+            <span className="font-semibold text-slate-900">
+              {serviceToArchive?.name}
+            </span>
+            ? It will be hidden from active service lists, but you can restore it later.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setServiceToArchive(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={handleConfirmArchiveService}
+            >
+              Archive Service
+            </Button>
+          </div>
         </div>
       </Modal>
     </div>
