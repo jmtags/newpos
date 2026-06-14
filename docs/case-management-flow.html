@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Case Management Module Flow</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 18mm 16mm;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      color: #172033;
+      font-family: Arial, Helvetica, sans-serif;
+      font-size: 11.5px;
+      line-height: 1.48;
+      margin: 0;
+      background: #ffffff;
+    }
+
+    h1,
+    h2,
+    h3 {
+      color: #0f766e;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 28px;
+      line-height: 1.1;
+      margin-bottom: 8px;
+    }
+
+    h2 {
+      border-bottom: 1px solid #cbd5e1;
+      font-size: 17px;
+      margin-top: 24px;
+      padding-bottom: 5px;
+    }
+
+    h3 {
+      font-size: 13px;
+      margin-top: 14px;
+    }
+
+    p {
+      margin: 7px 0;
+    }
+
+    ul,
+    ol {
+      margin: 7px 0 7px 20px;
+      padding: 0;
+    }
+
+    li {
+      margin: 3px 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin-top: 8px;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border: 1px solid #d8e0ea;
+      padding: 6px 7px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #ecfdf5;
+      color: #134e4a;
+      font-weight: 700;
+    }
+
+    .cover {
+      border-bottom: 4px solid #0f766e;
+      margin-bottom: 20px;
+      padding-bottom: 18px;
+    }
+
+    .subtitle {
+      color: #475569;
+      font-size: 13px;
+      max-width: 650px;
+    }
+
+    .meta {
+      color: #64748b;
+      font-size: 10.5px;
+      margin-top: 12px;
+    }
+
+    .callout {
+      background: #f8fafc;
+      border-left: 4px solid #14b8a6;
+      margin: 12px 0;
+      padding: 10px 12px;
+    }
+
+    .warning {
+      background: #fff7ed;
+      border-left-color: #f97316;
+    }
+
+    .grid {
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 1fr 1fr;
+      margin-top: 8px;
+    }
+
+    .box {
+      border: 1px solid #d8e0ea;
+      border-radius: 8px;
+      padding: 9px 10px;
+    }
+
+    .box strong {
+      color: #0f766e;
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .small {
+      color: #64748b;
+      font-size: 10px;
+    }
+
+    .page-break {
+      break-before: page;
+    }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <h1>Case Management Module Flow</h1>
+    <p class="subtitle">
+      Operational guide for the Psyzygy Clinic POS Case Management module:
+      how cases are created, tracked, assigned, updated, and reviewed.
+    </p>
+    <p class="meta">Prepared for NEW_POS. Generated from the current implementation and database migrations.</p>
+  </section>
+
+  <section>
+    <h2>1. Purpose</h2>
+    <p>
+      The Case Management module tracks the operational progress of clinic cases,
+      especially assessment-related services that move through testing, scoring,
+      interpretation, report writing, review, revision, release, and closure.
+    </p>
+    <div class="callout">
+      <strong>Important privacy boundary:</strong>
+      the module is designed for operational progress tracking. Dashboards and case lists
+      do not show full confidential clinical notes. The visible notes are progress remarks,
+      task notes, and internal operational remarks.
+    </div>
+  </section>
+
+  <section>
+    <h2>2. Core Records</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Record</th>
+          <th>Purpose</th>
+          <th>Important Links</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>cases</strong></td>
+          <td>Main case file used by the Case Management module.</td>
+          <td>Client, service, transaction, transaction item, appointment, assigned associate.</td>
+        </tr>
+        <tr>
+          <td><strong>case_progress_logs</strong></td>
+          <td>Status history and progress timeline for each case.</td>
+          <td>Linked to one case. Stores from status, to status, notes, user/associate, and date.</td>
+        </tr>
+        <tr>
+          <td><strong>case_tasks</strong></td>
+          <td>Operational tasks assigned to users or associates.</td>
+          <td>Linked to one case. Tracks task status, due date, assigned user/associate, completion date.</td>
+        </tr>
+        <tr>
+          <td><strong>services.requires_case_management</strong></td>
+          <td>Controls whether a POS service should automatically create a case.</td>
+          <td>Configured in Service Settings per service.</td>
+        </tr>
+        <tr>
+          <td><strong>mental_health_associates.user_id</strong></td>
+          <td>Links an associate login to the associate record.</td>
+          <td>Used so associate users only see their assigned cases and tasks.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>3. Case Creation Flow</h2>
+    <h3>A. Manual Case Creation</h3>
+    <ol>
+      <li>A permitted user opens <strong>Case Management &gt; Create Case</strong>.</li>
+      <li>The user selects the client, service, assigned associate, priority, status, and target release date.</li>
+      <li>The system creates a case record with a generated case number such as <strong>CASE-YYYYMMDD-XXXXXX</strong>.</li>
+      <li>The case appears in All Cases, dashboard counts, and status-specific lists.</li>
+    </ol>
+
+    <h3>B. Automatic Case Creation From POS</h3>
+    <ol>
+      <li>Admin or manager opens Service Settings and turns on <strong>Requires Case Management</strong> for a service.</li>
+      <li>A POS transaction is created and includes that service as a transaction item.</li>
+      <li>After the transaction item is inserted, the database trigger checks the service setting.</li>
+      <li>If the service requires case management, the system creates one linked case.</li>
+      <li>The case is linked to the client, service, transaction, transaction item, and associate if one was selected on the item.</li>
+      <li>The default case status is <strong>New</strong>.</li>
+      <li>The default report status is <strong>Not Started</strong>.</li>
+      <li>For assessment services, the target release date defaults to transaction date plus 30 days.</li>
+    </ol>
+
+    <div class="callout">
+      Duplicate protection is built in. The system has a unique index on
+      <strong>cases.transaction_item_id</strong>, so the same POS line item cannot create multiple cases.
+    </div>
+  </section>
+
+  <section>
+    <h2>4. Main Operational Workflow</h2>
+    <p>A typical assessment case moves through this sequence:</p>
+    <ol>
+      <li><strong>New</strong> - case has been created manually or from POS.</li>
+      <li><strong>Scheduled</strong> - testing or appointment schedule is set.</li>
+      <li><strong>Testing Ongoing</strong> - assessment/testing is in progress.</li>
+      <li><strong>Testing Completed</strong> - testing phase is done.</li>
+      <li><strong>Scoring</strong> - protocols/results are being scored.</li>
+      <li><strong>Interpretation</strong> - results are being interpreted.</li>
+      <li><strong>Report Writing</strong> - report is being drafted.</li>
+      <li><strong>For Review</strong> - report or case output is ready for review.</li>
+      <li><strong>For Revision</strong> - reviewer requested changes.</li>
+      <li><strong>Ready for Release</strong> - output is complete and ready to release.</li>
+      <li><strong>Released</strong> - output has been released to the client or authorized recipient.</li>
+      <li><strong>Closed</strong> - case is complete and no active work remains.</li>
+      <li><strong>Cancelled</strong> - case was cancelled.</li>
+    </ol>
+    <p>
+      Whenever the status changes through the Case Management API, the system automatically
+      inserts a row into <strong>case_progress_logs</strong>. This gives the case details page
+      a timeline of operational progress.
+    </p>
+  </section>
+
+  <section class="page-break">
+    <h2>5. Report Status</h2>
+    <p>
+      Report status is tracked separately from the main case status so the clinic can see
+      report progress clearly in dashboards and tables.
+    </p>
+    <table>
+      <thead>
+        <tr>
+          <th>Report Status</th>
+          <th>Meaning</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Not Started</td><td>No report work has started yet.</td></tr>
+        <tr><td>In Progress</td><td>Report work is active.</td></tr>
+        <tr><td>For Review</td><td>Report is ready for review.</td></tr>
+        <tr><td>For Revision</td><td>Report needs changes.</td></tr>
+        <tr><td>Ready for Release</td><td>Report is approved and ready to release.</td></tr>
+        <tr><td>Released</td><td>Report has been released.</td></tr>
+        <tr><td>Cancelled</td><td>Report work was cancelled.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>6. Case Tasks Flow</h2>
+    <ol>
+      <li>A permitted user creates a task from Case Tasks or from a case detail workflow.</li>
+      <li>The task can be assigned to a user or an associate.</li>
+      <li>The task is given a status and optional due date.</li>
+      <li>Task statuses are <strong>Pending</strong>, <strong>In Progress</strong>, <strong>Completed</strong>, and <strong>Cancelled</strong>.</li>
+      <li>Associate users can update tasks assigned to them or tasks under their assigned cases.</li>
+      <li>Completing a task records a completion timestamp.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>7. Dashboard Flow</h2>
+    <p>The dashboard summarizes operational case workload using these cards:</p>
+    <div class="grid">
+      <div class="box"><strong>New cases</strong>Cases currently in New status.</div>
+      <div class="box"><strong>Testing ongoing</strong>Cases in Testing Ongoing status.</div>
+      <div class="box"><strong>Report writing</strong>Cases or reports in Report Writing.</div>
+      <div class="box"><strong>For review</strong>Cases or reports waiting for review.</div>
+      <div class="box"><strong>For revision</strong>Cases or reports needing revision.</div>
+      <div class="box"><strong>Ready for release</strong>Cases or reports ready to release.</div>
+      <div class="box"><strong>Released this month</strong>Cases released in the current month.</div>
+      <div class="box"><strong>Overdue cases</strong>Open cases past target release date.</div>
+    </div>
+    <p>Dashboard filters include date range, branch, associate, service, case status, report status, and payment status.</p>
+    <div class="callout warning">
+      Branch filtering is prepared in the UI, but the current schema does not yet include a branch field.
+      When branch data is added later, the dashboard can use it.
+    </div>
+  </section>
+
+  <section>
+    <h2>8. Role-Based Access</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Role</th>
+          <th>Case Access</th>
+          <th>Allowed Actions</th>
+          <th>Hidden/Restricted</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>admin</td>
+          <td>All modules and all cases.</td>
+          <td>Create cases, update status, assign associates, add progress notes, manage tasks, view payment status.</td>
+          <td>None by design.</td>
+        </tr>
+        <tr>
+          <td>manager</td>
+          <td>All modules and all cases.</td>
+          <td>Same operational case permissions as admin, except admin-only system operations remain protected.</td>
+          <td>None by design.</td>
+        </tr>
+        <tr>
+          <td>case_staff</td>
+          <td>Case Management module. Branch scoping can apply when branch data exists.</td>
+          <td>Create cases, update status, assign associates, add progress notes, manage tasks, view payment status.</td>
+          <td>Transactions, payments, service pricing, clinic settings, discount types, audit logs, sales reports.</td>
+        </tr>
+        <tr>
+          <td>associate_user</td>
+          <td>Only cases assigned to their linked mental health associate record.</td>
+          <td>Update assigned tasks and add progress remarks for assigned cases.</td>
+          <td>Payment details and non-case modules are hidden.</td>
+        </tr>
+        <tr>
+          <td>case_viewer</td>
+          <td>Case progress viewing only.</td>
+          <td>View case progress. No editing.</td>
+          <td>Create, update, assignment, task editing, and payment details.</td>
+        </tr>
+        <tr>
+          <td>regular_user</td>
+          <td>No Case Management access unless explicitly changed later.</td>
+          <td>Existing regular POS permissions only.</td>
+          <td>Case Management.</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="page-break">
+    <h2>9. Payment Visibility</h2>
+    <p>
+      Payment status can appear on case rows/cards for admin, manager, and case_staff.
+      It is hidden from associate_user because associate-level users should not see payment details.
+    </p>
+    <p>
+      The Case Management module uses transaction references for operational linking, but it does not expose
+      full transaction/payment details to associate-level users.
+    </p>
+  </section>
+
+  <section>
+    <h2>10. Pages in the Module</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Page</th>
+          <th>Use</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Case Dashboard</td><td>Summary cards, filters, and recent filtered cases.</td></tr>
+        <tr><td>All Cases</td><td>Full case list visible to the current role.</td></tr>
+        <tr><td>My Cases</td><td>Cases scoped to the current user's visibility. For associates, this means assigned cases.</td></tr>
+        <tr><td>Create Case</td><td>Manual case creation for allowed users.</td></tr>
+        <tr><td>Case Details</td><td>Client basic info, service, transaction reference, associate, status, target release date, timeline, tasks, and internal remarks.</td></tr>
+        <tr><td>Case Tasks</td><td>Task list and task creation/update workflow.</td></tr>
+        <tr><td>Overdue Cases</td><td>Open cases past target release date.</td></tr>
+        <tr><td>For Review</td><td>Cases or reports awaiting review.</td></tr>
+        <tr><td>Ready for Release</td><td>Cases or reports ready to release.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>11. Daily Recommended Workflow</h2>
+    <ol>
+      <li>Configure services that require case tracking by enabling <strong>Requires Case Management</strong>.</li>
+      <li>Create POS transactions as usual. Cases are created automatically for eligible service items.</li>
+      <li>Open Case Dashboard to review new, overdue, for review, and ready-for-release cases.</li>
+      <li>Assign associates and tasks where needed.</li>
+      <li>Use status changes and progress remarks to keep the timeline updated.</li>
+      <li>Use target release date and overdue list to monitor turnaround time.</li>
+      <li>Release and close cases when operational work is complete.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>12. Current Limitations and Notes</h2>
+    <ul>
+      <li>Branch filtering is prepared but branch data is not yet part of the current schema.</li>
+      <li>The module tracks operational progress, not full clinical documentation.</li>
+      <li>Automatic case creation happens only for services where <strong>requires_case_management</strong> is true.</li>
+      <li>Existing POS behavior remains unchanged for services that do not require case management.</li>
+    </ul>
+    <p class="small">
+      Source files: database/8_add_case_management_module.sql,
+      database/9_add_case_management_backend_api.sql,
+      database/10_add_case_role_access.sql,
+      database/11_add_case_ui_support.sql,
+      database/12_connect_cases_to_pos_transactions.sql,
+      and src/app/pages/CaseManagement.tsx.
+    </p>
+  </section>
+</body>
+</html>
