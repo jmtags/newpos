@@ -31,15 +31,27 @@ export interface CaseRecord {
   case_number: string;
   client_id: string;
   client_name?: string | null;
+  client?: {
+    id: string;
+    client_code: string;
+    full_name: string;
+    contact_number: string | null;
+    email: string | null;
+    sex: string | null;
+    age: number | null;
+  } | null;
   service_id: string | null;
   service_name?: string | null;
   transaction_id: string | null;
+  transaction_number?: string | null;
+  payment_status?: string | null;
   transaction_item_id: string | null;
   appointment_id: string | null;
   associate_id: string | null;
   associate_name?: string | null;
   case_type: string;
   status: CaseStatus;
+  report_status?: string | null;
   priority: 'Low' | 'Normal' | 'High' | 'Urgent';
   presenting_concern: string | null;
   internal_notes: string | null;
@@ -105,6 +117,27 @@ export interface CaseTaskPayload {
   assigned_to_user_id?: string | null;
   assigned_to_associate_id?: string | null;
   due_date?: string | null;
+}
+
+export interface CaseFormOptions {
+  clients: Array<{
+    id: string;
+    client_code: string;
+    full_name: string;
+    contact_number: string | null;
+    email: string | null;
+  }>;
+  services: Array<{
+    id: string;
+    name: string;
+    category: string | null;
+  }>;
+  associates: Array<{
+    id: string;
+    full_name: string;
+    title: string | null;
+    profession: string | null;
+  }>;
 }
 
 interface RpcEnvelope<T> {
@@ -243,6 +276,12 @@ export const caseManagementService = {
     });
   },
 
+  async listTasks(caseId?: string | null): Promise<CaseTask[]> {
+    return callRpc<CaseTask[]>('case_list_tasks', {
+      target_case_id: caseId || null
+    });
+  },
+
   async listProgressLogs(caseId: string): Promise<CaseProgressLog[]> {
     return callRpc<CaseProgressLog[]>('case_list_progress_logs', {
       target_case_id: caseId
@@ -257,5 +296,9 @@ export const caseManagementService = {
       target_case_id: caseId,
       progress_note: progressNote
     });
+  },
+
+  async getFormOptions(): Promise<CaseFormOptions> {
+    return callRpc<CaseFormOptions>('case_form_options');
   }
 };
