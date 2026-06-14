@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  CalendarDays,
   CheckCircle2,
   ClipboardList,
   Clock,
@@ -44,6 +45,18 @@ type CaseView =
   | 'review'
   | 'release';
 
+const REPORT_STATUSES = [
+  'Not Started',
+  'In Progress',
+  'For Review',
+  'For Revision',
+  'Ready for Release',
+  'Released',
+  'Cancelled'
+] as const;
+
+const PAYMENT_STATUSES = ['Paid', 'Partial', 'Unpaid', 'Overpaid', 'Void'] as const;
+
 const statusBadgeVariant = (status: string): 'success' | 'warning' | 'danger' | 'info' | 'default' => {
   if (['Released', 'Closed', 'Completed'].includes(status)) return 'success';
   if (['For Review', 'For Revision', 'Ready for Release'].includes(status)) return 'warning';
@@ -84,6 +97,50 @@ const isOverdue = (caseItem: CaseRecord) => {
 const isOpenTask = (task: CaseTask) =>
   !['Completed', 'Cancelled'].includes(task.status);
 
+const caseMatchesWorkflowState = (caseItem: CaseRecord, status: string) =>
+  caseItem.status === status || caseItem.report_status === status;
+
+const getCaseBranch = (caseItem: CaseRecord) => {
+  const extendedCase = caseItem as CaseRecord & {
+    branch?: string | null;
+    branch_id?: string | null;
+    branch_name?: string | null;
+    client?: CaseRecord['client'] & {
+      branch?: string | null;
+      branch_id?: string | null;
+      branch_name?: string | null;
+    };
+  };
+
+  return (
+    extendedCase.branch_name ||
+    extendedCase.branch ||
+    extendedCase.branch_id ||
+    extendedCase.client?.branch_name ||
+    extendedCase.client?.branch ||
+    extendedCase.client?.branch_id ||
+    ''
+  );
+};
+
+const getCaseDate = (caseItem: CaseRecord) =>
+  (caseItem.created_at || caseItem.target_release_date || '').slice(0, 10);
+
+const isReleasedThisMonth = (caseItem: CaseRecord) => {
+  if (!caseMatchesWorkflowState(caseItem, 'Released')) return false;
+
+  const dateValue = caseItem.released_at || caseItem.updated_at;
+  if (!dateValue) return false;
+
+  const releasedAt = new Date(dateValue);
+  const today = new Date();
+
+  return (
+    releasedAt.getFullYear() === today.getFullYear() &&
+    releasedAt.getMonth() === today.getMonth()
+  );
+};
+
 export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) => {
   const [activeView, setActiveView] = useState<CaseView>('dashboard');
   const [cases, setCases] = useState<CaseRecord[]>([]);
@@ -121,6 +178,16 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
     assigned_to_associate_id: '',
     due_date: '',
     status: 'Pending' as CaseTaskStatus
+  });
+  const [dashboardFilters, setDashboardFilters] = useState({
+    date_from: '',
+    date_to: '',
+    branch: '',
+    associate_id: '',
+    service_id: '',
+    case_status: '',
+    report_status: '',
+    payment_status: ''
   });
 
   const role = currentUser?.role;
@@ -171,35 +238,127 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
     }
   };
 
+  const branchOptions = useMemo(() => {
+    const branches = Array.from(
+      new Set(cases.map(getCaseBranch).filter(Boolean))
+    ).sort();
+
+    return branches.map((branch) => ({ value: branch, label: branch }));
+  }, [cases]);
+
+  const associateOptions = useMemo(() => {
+    const fromOptions = formOptions.associates.map((associate) => ({
+      value: associate.id,
+      label: associate.full_name
+    }));
+    const fromCases = cases
+      .filter((caseItem) => caseItem.associate_id)
+      .map((caseItem) => ({
+        value: caseItem.associate_id as string,
+        label: caseItem.associate_name || 'Assigned associate'
+      }));
+
+    return Array.from(new Map([...fromOptions, ...fromCases].map((item) => [item.value, item])).values())
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [cases, formOptions.associates]);
+
+  const serviceOptions = useMemo(() => {
+    const fromOptions = formOptions.services.map((service) => ({
+      value: service.id,
+      label: service.name
+    }));
+    const fromCases = cases
+      .filter((caseItem) => caseItem.service_id)
+      .map((caseItem) => ({
+        value: caseItem.service_id as string,
+        label: caseItem.service_name || 'Service'
+      }));
+
+    return Array.from(new Map([...fromOptions, ...fromCases].map((item) => [item.value, item])).values())
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [cases, formOptions.services]);
+
   const filteredCases = useMemo(() => {
     const normalized = searchTerm.trim().toLowerCase();
-    if (!normalized) return cases;
 
     return cases.filter((caseItem) =>
-      [
-        caseItem.case_number,
-        caseItem.client_name,
-        caseItem.service_name,
-        caseItem.associate_name,
-        caseItem.status
-      ]
-        .filter(Boolean)
-        .some((value) => String(value).toLowerCase().includes(normalized))
+      (!normalized ||
+        [
+          caseItem.case_number,
+          caseItem.client_name,
+          caseItem.service_name,
+          caseItem.associate_name,
+          caseItem.status,
+          caseItem.report_status
+        ]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase().includes(normalized))) &&
+      (!dashboardFilters.date_from || getCaseDate(caseItem) >= dashboardFilters.date_from) &&
+      (!dashboardFilters.date_to || getCaseDate(caseItem) <= dashboardFilters.date_to) &&
+      (!dashboardFilters.branch || getCaseBranch(caseItem) === dashboardFilters.branch) &&
+      (!dashboardFilters.associate_id || caseItem.associate_id === dashboardFilters.associate_id) &&
+      (!dashboardFilters.service_id || caseItem.service_id === dashboardFilters.service_id) &&
+      (!dashboardFilters.case_status || caseItem.status === dashboardFilters.case_status) &&
+      (!dashboardFilters.report_status ||
+        (caseItem.report_status || 'Not Started') === dashboardFilters.report_status) &&
+      (!dashboardFilters.payment_status ||
+        (canViewPayment && caseItem.payment_status === dashboardFilters.payment_status))
     );
-  }, [cases, searchTerm]);
+  }, [canViewPayment, cases, dashboardFilters, searchTerm]);
 
-  const overdueCases = useMemo(() => cases.filter(isOverdue), [cases]);
+  const overdueCases = useMemo(() => filteredCases.filter(isOverdue), [filteredCases]);
   const reviewCases = useMemo(
-    () => cases.filter((caseItem) => caseItem.status === 'For Review'),
-    [cases]
+    () => filteredCases.filter((caseItem) => caseMatchesWorkflowState(caseItem, 'For Review')),
+    [filteredCases]
   );
   const releaseCases = useMemo(
-    () => cases.filter((caseItem) => caseItem.status === 'Ready for Release'),
-    [cases]
+    () => filteredCases.filter((caseItem) => caseMatchesWorkflowState(caseItem, 'Ready for Release')),
+    [filteredCases]
   );
-  const openCases = useMemo(
-    () => cases.filter((caseItem) => !['Released', 'Closed', 'Cancelled'].includes(caseItem.status)),
-    [cases]
+  const dashboardSummary = useMemo(
+    () => [
+      {
+        label: 'New cases',
+        value: filteredCases.filter((caseItem) => caseItem.status === 'New').length,
+        icon: FolderKanban
+      },
+      {
+        label: 'Testing ongoing',
+        value: filteredCases.filter((caseItem) => caseItem.status === 'Testing Ongoing').length,
+        icon: Clock
+      },
+      {
+        label: 'Report writing',
+        value: filteredCases.filter((caseItem) => caseMatchesWorkflowState(caseItem, 'Report Writing')).length,
+        icon: ClipboardList
+      },
+      {
+        label: 'For review',
+        value: reviewCases.length,
+        icon: FileCheck2
+      },
+      {
+        label: 'For revision',
+        value: filteredCases.filter((caseItem) => caseMatchesWorkflowState(caseItem, 'For Revision')).length,
+        icon: RefreshCw
+      },
+      {
+        label: 'Ready for release',
+        value: releaseCases.length,
+        icon: CheckCircle2
+      },
+      {
+        label: 'Released this month',
+        value: filteredCases.filter(isReleasedThisMonth).length,
+        icon: CalendarDays
+      },
+      {
+        label: 'Overdue cases',
+        value: overdueCases.length,
+        icon: AlertTriangle
+      }
+    ],
+    [filteredCases, overdueCases.length, releaseCases.length, reviewCases.length]
   );
   const caseTasks = useMemo(
     () => tasks.filter((task) => task.case_id === selectedCase?.id),
@@ -387,6 +546,114 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
     </button>
   );
 
+  const renderDashboardFilters = () => (
+    <Card className="p-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <Input
+          label="Date From"
+          type="date"
+          value={dashboardFilters.date_from}
+          onChange={(event) =>
+            setDashboardFilters({ ...dashboardFilters, date_from: event.target.value })
+          }
+        />
+        <Input
+          label="Date To"
+          type="date"
+          value={dashboardFilters.date_to}
+          onChange={(event) =>
+            setDashboardFilters({ ...dashboardFilters, date_to: event.target.value })
+          }
+        />
+        <Select
+          label="Branch"
+          value={dashboardFilters.branch}
+          disabled={branchOptions.length === 0}
+          onChange={(event) =>
+            setDashboardFilters({ ...dashboardFilters, branch: event.target.value })
+          }
+          options={[
+            {
+              value: '',
+              label: branchOptions.length === 0 ? 'No branch data' : 'All branches'
+            },
+            ...branchOptions
+          ]}
+        />
+        <Select
+          label="Associate"
+          value={dashboardFilters.associate_id}
+          onChange={(event) =>
+            setDashboardFilters({ ...dashboardFilters, associate_id: event.target.value })
+          }
+          options={[{ value: '', label: 'All associates' }, ...associateOptions]}
+        />
+        <Select
+          label="Service"
+          value={dashboardFilters.service_id}
+          onChange={(event) =>
+            setDashboardFilters({ ...dashboardFilters, service_id: event.target.value })
+          }
+          options={[{ value: '', label: 'All services' }, ...serviceOptions]}
+        />
+        <Select
+          label="Case Status"
+          value={dashboardFilters.case_status}
+          onChange={(event) =>
+            setDashboardFilters({ ...dashboardFilters, case_status: event.target.value })
+          }
+          options={[
+            { value: '', label: 'All case statuses' },
+            ...CASE_STATUSES.map((status) => ({ value: status, label: status }))
+          ]}
+        />
+        <Select
+          label="Report Status"
+          value={dashboardFilters.report_status}
+          onChange={(event) =>
+            setDashboardFilters({ ...dashboardFilters, report_status: event.target.value })
+          }
+          options={[
+            { value: '', label: 'All report statuses' },
+            ...REPORT_STATUSES.map((status) => ({ value: status, label: status }))
+          ]}
+        />
+        {canViewPayment && (
+          <Select
+            label="Payment Status"
+            value={dashboardFilters.payment_status}
+            onChange={(event) =>
+              setDashboardFilters({ ...dashboardFilters, payment_status: event.target.value })
+            }
+            options={[
+              { value: '', label: 'All payment statuses' },
+              ...PAYMENT_STATUSES.map((status) => ({ value: status, label: status }))
+            ]}
+          />
+        )}
+      </div>
+      <div className="mt-4 flex justify-end">
+        <Button
+          variant="outline"
+          onClick={() =>
+            setDashboardFilters({
+              date_from: '',
+              date_to: '',
+              branch: '',
+              associate_id: '',
+              service_id: '',
+              case_status: '',
+              report_status: '',
+              payment_status: ''
+            })
+          }
+        >
+          Clear Filters
+        </Button>
+      </div>
+    </Card>
+  );
+
   const renderCaseTable = (rows: CaseRecord[], title: string) => (
     <Card>
       <div className="p-4 border-b border-slate-200 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -502,13 +769,10 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
 
   const renderDashboard = () => (
     <div className="space-y-6">
+      {renderDashboardFilters()}
+
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {[
-          { label: 'Open Cases', value: openCases.length, icon: FolderKanban },
-          { label: 'Overdue', value: overdueCases.length, icon: AlertTriangle },
-          { label: 'For Review', value: reviewCases.length, icon: FileCheck2 },
-          { label: 'Ready for Release', value: releaseCases.length, icon: CheckCircle2 }
-        ].map((item) => {
+        {dashboardSummary.map((item) => {
           const Icon = item.icon;
           return (
             <Card key={item.label} className="p-5">
@@ -527,6 +791,13 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
       </div>
 
       {renderCaseTable(filteredCases.slice(0, 8), 'Recent Cases')}
+    </div>
+  );
+
+  const renderCaseListView = (rows: CaseRecord[], title: string) => (
+    <div className="space-y-4">
+      {renderDashboardFilters()}
+      {renderCaseTable(rows, title)}
     </div>
   );
 
@@ -964,8 +1235,8 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
       ) : (
         <>
           {activeView === 'dashboard' && renderDashboard()}
-          {activeView === 'all' && renderCaseTable(filteredCases, 'All Cases')}
-          {activeView === 'mine' && renderCaseTable(filteredCases, 'My Cases')}
+          {activeView === 'all' && renderCaseListView(filteredCases, 'All Cases')}
+          {activeView === 'mine' && renderCaseListView(filteredCases, 'My Cases')}
           {activeView === 'create' && renderCreateCase()}
           {activeView === 'details' && renderDetails()}
           {activeView === 'tasks' && (
@@ -974,9 +1245,9 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
               {renderTasks(visibleTasks)}
             </div>
           )}
-          {activeView === 'overdue' && renderCaseTable(overdueCases, 'Overdue Cases')}
-          {activeView === 'review' && renderCaseTable(reviewCases, 'For Review')}
-          {activeView === 'release' && renderCaseTable(releaseCases, 'Ready for Release')}
+          {activeView === 'overdue' && renderCaseListView(overdueCases, 'Overdue Cases')}
+          {activeView === 'review' && renderCaseListView(reviewCases, 'For Review')}
+          {activeView === 'release' && renderCaseListView(releaseCases, 'Ready for Release')}
         </>
       )}
     </div>
