@@ -1,6 +1,12 @@
 import { supabase } from '../lib/supabaseClient';
 
-export type UserRole = 'admin' | 'manager' | 'regular_user';
+export type UserRole =
+  | 'admin'
+  | 'manager'
+  | 'case_staff'
+  | 'associate_user'
+  | 'case_viewer'
+  | 'regular_user';
 
 export interface AppUser {
   id: string;

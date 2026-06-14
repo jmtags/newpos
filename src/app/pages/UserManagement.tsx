@@ -6,23 +6,24 @@ import { Card } from '../components/Card';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { supabase } from '../lib/supabaseClient';
+import { roleLabels } from '../lib/accessControl';
 import { userService, AppUser, UserRole } from '../services/userService';
 
 const roleOptions = [
   { value: 'admin', label: 'Admin' },
   { value: 'manager', label: 'Manager' },
+  { value: 'case_staff', label: 'Case Staff' },
+  { value: 'associate_user', label: 'Associate User' },
+  { value: 'case_viewer', label: 'Case Viewer' },
   { value: 'regular_user', label: 'Regular User' }
 ];
-
-const roleLabels: Record<UserRole, string> = {
-  admin: 'Admin',
-  manager: 'Manager',
-  regular_user: 'Regular User'
-};
 
 const roleBadgeVariants: Record<UserRole, 'danger' | 'info' | 'default'> = {
   admin: 'danger',
   manager: 'info',
+  case_staff: 'info',
+  associate_user: 'default',
+  case_viewer: 'default',
   regular_user: 'default'
 };
 
@@ -159,7 +160,7 @@ export const UserManagement: React.FC = () => {
           User Management
         </h2>
         <p className="text-sm text-slate-500 mt-1">
-          Manage app access for admins, managers, and regular users.
+          Manage app access for clinic, case, and associate users.
         </p>
       </div>
 

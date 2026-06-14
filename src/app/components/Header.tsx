@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bell, ChevronDown, LogOut, Menu, User } from 'lucide-react';
+import { roleLabels } from '../lib/accessControl';
 import type { AppUser } from '../services/userService';
 
 interface HeaderProps {
@@ -8,12 +9,6 @@ interface HeaderProps {
   currentUser: AppUser | null;
   onLogout: () => void | Promise<void>;
 }
-
-const roleLabels: Record<string, string> = {
-  admin: 'Administrator',
-  manager: 'Manager',
-  regular_user: 'Regular User'
-};
 
 export const Header: React.FC<HeaderProps> = ({
   title,

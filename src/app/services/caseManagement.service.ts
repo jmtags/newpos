@@ -69,6 +69,17 @@ export interface CaseTask {
   updated_at: string;
 }
 
+export interface CaseProgressLog {
+  id: string;
+  case_id: string;
+  from_status: CaseStatus | null;
+  to_status: CaseStatus;
+  notes: string | null;
+  changed_by_user_id: string | null;
+  changed_by_associate_id: string | null;
+  created_at: string;
+}
+
 export interface CasePayload {
   case_number?: string | null;
   client_id: string;
@@ -199,6 +210,18 @@ export const caseManagementService = {
     });
   },
 
+  async assignAssociate(
+    caseId: string,
+    associateId: string | null,
+    assignmentNote?: string | null
+  ): Promise<CaseRecord> {
+    return callRpc<CaseRecord>('case_assign_associate', {
+      target_case_id: caseId,
+      target_associate_id: associateId,
+      assignment_note: assignmentNote || null
+    });
+  },
+
   async createTask(payload: CaseTaskPayload & { case_id: string; title: string }): Promise<CaseTask> {
     if (payload.status) assertValidTaskStatus(payload.status);
 
@@ -217,6 +240,22 @@ export const caseManagementService = {
   async completeTask(taskId: string): Promise<CaseTask> {
     return callRpc<CaseTask>('case_task_complete', {
       target_task_id: taskId
+    });
+  },
+
+  async listProgressLogs(caseId: string): Promise<CaseProgressLog[]> {
+    return callRpc<CaseProgressLog[]>('case_list_progress_logs', {
+      target_case_id: caseId
+    });
+  },
+
+  async addProgressNote(
+    caseId: string,
+    progressNote: string
+  ): Promise<CaseProgressLog> {
+    return callRpc<CaseProgressLog>('case_add_progress_note', {
+      target_case_id: caseId,
+      progress_note: progressNote
     });
   }
 };

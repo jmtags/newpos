@@ -147,7 +147,10 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 // PROVIDER
 // =============================
 
-export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const AppProvider: React.FC<{
+  children: ReactNode;
+  shouldLoadData?: boolean;
+}> = ({ children, shouldLoadData = true }) => {
   const [clients, setClients] = useState<Client[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -159,6 +162,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   // =============================
 
   const refreshData = async () => {
+    if (!shouldLoadData) {
+      setClients([]);
+      setServices([]);
+      setTransactions([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -182,7 +194,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     refreshData();
-  }, []);
+  }, [shouldLoadData]);
 
   // =============================
   // CLIENT ACTIONS

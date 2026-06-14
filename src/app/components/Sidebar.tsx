@@ -16,8 +16,10 @@ import {
   CalendarClock,
   DoorOpen,
   ClipboardList,
-  Bot
+  Bot,
+  FolderKanban
 } from 'lucide-react';
+import { canAccessPage } from '../lib/accessControl';
 import type { AppUser } from '../services/userService';
 
 interface SidebarProps {
@@ -32,6 +34,7 @@ interface SidebarProps {
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'aiAssistant', label: 'AI Assistant', icon: Bot },
+  { id: 'cases', label: 'Case Management', icon: FolderKanban },
   { id: 'pos', label: 'New Transaction', icon: ShoppingCart },
   { id: 'clients', label: 'Clients', icon: Users },
   { id: 'transactions', label: 'Transactions', icon: Receipt },
@@ -58,13 +61,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onLogout,
   currentUser
 }) => {
-  const visibleMenuItems = menuItems.filter(
-    (item) =>
-      (item.id !== 'users' || currentUser?.role === 'admin') &&
-      (item.id !== 'aiAssistant' ||
-        ['admin', 'manager', 'regular_user'].includes(currentUser?.role || ''))
+  const currentRole = currentUser?.role;
+  const visibleMenuItems = menuItems.filter((item) => {
+    if (item.id === 'users' && currentRole !== 'admin') return false;
+    if (item.id === 'aiAssistant' && !['admin', 'manager', 'regular_user'].includes(currentRole || '')) {
+      return false;
+    }
+
+    return canAccessPage(currentRole, item.id);
+  });
+  const visibleSchedulingItems = schedulingItems.filter((item) =>
+    canAccessPage(currentRole, item.id)
   );
-  const visibleSchedulingItems = schedulingItems;
 
   const renderMenuButton = (item: typeof menuItems[number]) => {
     const Icon = item.icon;
@@ -123,13 +131,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {visibleMenuItems.map(renderMenuButton)}
           </ul>
 
-          <div className="mt-5 mb-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-            Scheduling
-          </div>
+          {visibleSchedulingItems.length > 0 && (
+            <>
+              <div className="mt-5 mb-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Scheduling
+              </div>
 
-          <ul className="space-y-1">
-            {visibleSchedulingItems.map(renderMenuButton)}
-          </ul>
+              <ul className="space-y-1">
+                {visibleSchedulingItems.map(renderMenuButton)}
+              </ul>
+            </>
+          )}
         </nav>
 
         <div className="p-4 border-t border-slate-800">

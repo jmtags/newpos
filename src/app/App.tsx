@@ -24,6 +24,12 @@ import { AppointmentDetails } from './pages/AppointmentDetails';
 import { RoomsManagement } from './pages/RoomsManagement';
 import { AssociateAvailability } from './pages/AssociateAvailability';
 import { AIAssistant } from './pages/AIAssistant';
+import { CaseManagement } from './pages/CaseManagement';
+import {
+  canAccessPage,
+  caseOnlyRoles,
+  getDefaultPageForRole
+} from './lib/accessControl';
 
 type AppointmentReturnPage = 'appointments' | 'scheduleCalendar';
 
@@ -120,17 +126,12 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isLoggedIn && currentUser?.role !== 'admin' && currentPage === 'users') {
-      setCurrentPage('dashboard');
-    }
-
     if (
       isLoggedIn &&
-      currentPage === 'aiAssistant' &&
       currentUser &&
-      !['admin', 'manager', 'regular_user'].includes(currentUser.role)
+      !canAccessPage(currentUser.role, currentPage)
     ) {
-      setCurrentPage('dashboard');
+      setCurrentPage(getDefaultPageForRole(currentUser.role));
     }
   }, [currentPage, currentUser?.role, isLoggedIn]);
 
@@ -144,7 +145,7 @@ export default function App() {
     profileLoadId.current += 1;
     setIsLoggedIn(false);
     setCurrentUser(null);
-    setCurrentPage('dashboard');
+    setCurrentPage(getDefaultPageForRole(currentUser?.role));
     setSelectedAppointmentId(null);
     setAppointmentReturnPage('appointments');
     setSchedulingCalendarState(undefined);
@@ -217,6 +218,7 @@ export default function App() {
     const titles: Record<string, string> = {
       dashboard: 'Dashboard',
       aiAssistant: 'AI Assistant',
+      cases: 'Case Management',
       pos: 'New Transaction',
       clients: 'Client Management',
       transactions: 'Transactions',
@@ -245,6 +247,9 @@ export default function App() {
 
       case 'aiAssistant':
         return <AIAssistant currentUser={currentUser} />;
+
+      case 'cases':
+        return <CaseManagement currentUser={currentUser} />;
 
       case 'pos':
         return <POS />;
@@ -384,8 +389,11 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
+  const shouldLoadPosData =
+    !currentUser?.role || !caseOnlyRoles.includes(currentUser.role);
+
   return (
-    <AppProvider>
+    <AppProvider shouldLoadData={shouldLoadPosData}>
       <div className="flex h-screen overflow-hidden bg-slate-50">
         <Sidebar
           currentPage={currentPage}
