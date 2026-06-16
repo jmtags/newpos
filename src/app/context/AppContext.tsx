@@ -19,7 +19,7 @@ export interface Client {
   id: string;
   client_code: string;
   full_name: string;
-  birthdate: string;
+  birthdate: string | null;
   age: number;
   sex: 'Male' | 'Female' | 'Other';
   contact_number: string;

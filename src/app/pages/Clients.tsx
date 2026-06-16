@@ -64,7 +64,7 @@ export const Clients: React.FC = () => {
     setFormData({
       client_code: client.client_code,
       full_name: client.full_name,
-      birthdate: client.birthdate,
+      birthdate: client.birthdate || '',
       age: client.age,
       sex: client.sex,
       contact_number: client.contact_number,
@@ -90,7 +90,6 @@ export const Clients: React.FC = () => {
     } else {
       addClient({
         ...formData,
-        client_code: `CLT-${String(clients.length + 1).padStart(3, '0')}`,
         age
       });
     }
@@ -313,7 +312,9 @@ export const Clients: React.FC = () => {
               <div>
                 <p className="text-sm text-slate-600">Date of Birth</p>
                 <p className="font-medium">
-                  {new Date(selectedClient.birthdate).toLocaleDateString()}
+                  {selectedClient.birthdate
+                    ? new Date(selectedClient.birthdate).toLocaleDateString()
+                    : '-'}
                 </p>
               </div>
               <div>

@@ -351,7 +351,6 @@ export const POS: React.FC = () => {
 
     await addClient({
       ...newClient,
-      client_code: `CLT-${String(clients.length + 1).padStart(3, '0')}`,
       age
     });
 
