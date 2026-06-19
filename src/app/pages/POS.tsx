@@ -5,7 +5,7 @@ import { Input } from '../components/Input';
 import { Select } from '../components/Select';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
-import { useAppContext } from '../context/AppContext';
+import { useAppContext, Client } from '../context/AppContext';
 import { auditService } from '../services/auditService';
 import { posService, CartItem, PaymentRow } from '../services/posService';
 import { taxService } from '../services/tax.service';
@@ -17,7 +17,8 @@ import {
   Receipt,
   Percent,
   UserRoundCheck,
-  Share2
+  Share2,
+  Search
 } from 'lucide-react';
 
 const formatCurrency = (amount: number) =>
@@ -63,6 +64,10 @@ export const POS: React.FC = () => {
   const [referrals, setReferrals] = useState<any[]>([]);
   const [clinicSettings, setClinicSettings] = useState<any>(null);
 
+  const [showClientSearchModal, setShowClientSearchModal] = useState(false);
+  const [clientSearchTerm, setClientSearchTerm] = useState('');
+  const [clientSexFilter, setClientSexFilter] = useState('');
+  const [clientStatusFilter, setClientStatusFilter] = useState('');
   const [showAddClientModal, setShowAddClientModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
   const [completedTransaction, setCompletedTransaction] = useState<any>(null);
@@ -90,6 +95,28 @@ export const POS: React.FC = () => {
   );
   const selectedAssociate = associates.find((a) => a.id === selectedAssociateId);
   const selectedReferral = referrals.find((r) => r.id === selectedReferralId);
+
+  const filteredClients = useMemo(() => {
+    const search = clientSearchTerm.trim().toLowerCase();
+
+    return clients.filter((client) => {
+      const matchesSearch =
+        !search ||
+        client.full_name.toLowerCase().includes(search) ||
+        client.client_code.toLowerCase().includes(search) ||
+        client.contact_number.toLowerCase().includes(search) ||
+        client.email.toLowerCase().includes(search);
+
+      const matchesSex = !clientSexFilter || client.sex === clientSexFilter;
+      const isActive = client.consent_status && client.privacy_acknowledged;
+      const matchesStatus =
+        !clientStatusFilter ||
+        (clientStatusFilter === 'active' && isActive) ||
+        (clientStatusFilter === 'pending' && !isActive);
+
+      return matchesSearch && matchesSex && matchesStatus;
+    });
+  }, [clients, clientSearchTerm, clientSexFilter, clientStatusFilter]);
 
   useEffect(() => {
     loadPOSSettings();
@@ -339,6 +366,11 @@ export const POS: React.FC = () => {
     setTransactionNotes('');
   };
 
+  const handleSelectClient = (client: Client) => {
+    setSelectedClientId(client.id);
+    setShowClientSearchModal(false);
+  };
+
   const handleAddClient = async () => {
     if (!newClient.full_name.trim()) {
       alert('Please enter client full name.');
@@ -385,19 +417,37 @@ export const POS: React.FC = () => {
           </h3>
 
           <div className="flex flex-col md:flex-row gap-3">
-            <Select
-              label="Select Client"
-              options={[
-                { value: '', label: 'Select a client...' },
-                ...clients.map((client) => ({
-                  value: client.id,
-                  label: client.full_name
-                }))
-              ]}
-              value={selectedClientId}
-              onChange={(event) => setSelectedClientId(event.target.value)}
-              className="flex-1"
-            />
+            <div className="flex-1">
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Select Client
+              </label>
+              <div className="flex gap-2">
+                <Select
+                  aria-label="Select Client"
+                  options={[
+                    { value: '', label: 'Select a client...' },
+                    ...clients.map((client) => ({
+                      value: client.id,
+                      label: client.full_name
+                    }))
+                  ]}
+                  value={selectedClientId}
+                  onChange={(event) => setSelectedClientId(event.target.value)}
+                  className="flex-1"
+                />
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setShowClientSearchModal(true)}
+                  className="px-3"
+                  title="Search clients"
+                  aria-label="Search clients"
+                >
+                  <Search className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
 
             <Button
               variant="outline"
@@ -870,6 +920,122 @@ export const POS: React.FC = () => {
             </Button>
 
             <Button onClick={handleAddClient}>Add Client</Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={showClientSearchModal}
+        onClose={() => setShowClientSearchModal(false)}
+        title="Select Client"
+        size="xl"
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="md:col-span-2 relative">
+              <Search className="absolute left-3 top-[35px] text-slate-400 w-4 h-4" />
+              <Input
+                label="Search"
+                placeholder="Name, client ID, contact, or email"
+                value={clientSearchTerm}
+                onChange={(event) => setClientSearchTerm(event.target.value)}
+                className="pl-9"
+              />
+            </div>
+
+            <Select
+              label="Sex"
+              options={[
+                { value: '', label: 'All' },
+                { value: 'Male', label: 'Male' },
+                { value: 'Female', label: 'Female' },
+                { value: 'Other', label: 'Other' }
+              ]}
+              value={clientSexFilter}
+              onChange={(event) => setClientSexFilter(event.target.value)}
+            />
+
+            <Select
+              label="Status"
+              options={[
+                { value: '', label: 'All' },
+                { value: 'active', label: 'Active' },
+                { value: 'pending', label: 'Pending' }
+              ]}
+              value={clientStatusFilter}
+              onChange={(event) => setClientStatusFilter(event.target.value)}
+            />
+          </div>
+
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-600">
+                    Client ID
+                  </th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-600">
+                    Full Name
+                  </th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-600">
+                    Age / Sex
+                  </th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-600">
+                    Contact
+                  </th>
+                  <th className="text-left py-3 px-4 text-sm font-medium text-slate-600">
+                    Email
+                  </th>
+                  <th className="text-right py-3 px-4 text-sm font-medium text-slate-600">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredClients.map((client) => (
+                  <tr
+                    key={client.id}
+                    className={`border-b border-slate-100 hover:bg-slate-50 ${
+                      selectedClientId === client.id ? 'bg-teal-50' : ''
+                    }`}
+                  >
+                    <td className="py-3 px-4 text-sm text-slate-900">
+                      {client.client_code || '-'}
+                    </td>
+                    <td className="py-3 px-4 text-sm font-medium text-slate-900">
+                      {client.full_name}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-slate-600">
+                      {client.age || '-'} / {client.sex || '-'}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-slate-600">
+                      {client.contact_number || '-'}
+                    </td>
+                    <td className="py-3 px-4 text-sm text-slate-600">
+                      {client.email || '-'}
+                    </td>
+                    <td className="py-3 px-4 text-right">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={
+                          selectedClientId === client.id ? 'secondary' : 'primary'
+                        }
+                        onClick={() => handleSelectClient(client)}
+                      >
+                        {selectedClientId === client.id ? 'Selected' : 'Select'}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            {filteredClients.length === 0 && (
+              <div className="text-center py-10 text-slate-500">
+                No clients found matching your filters.
+              </div>
+            )}
           </div>
         </div>
       </Modal>
