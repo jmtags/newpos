@@ -102,10 +102,10 @@ export const POS: React.FC = () => {
     return clients.filter((client) => {
       const matchesSearch =
         !search ||
-        client.full_name.toLowerCase().includes(search) ||
-        client.client_code.toLowerCase().includes(search) ||
-        client.contact_number.toLowerCase().includes(search) ||
-        client.email.toLowerCase().includes(search);
+        (client.full_name || '').toLowerCase().includes(search) ||
+        (client.client_code || '').toLowerCase().includes(search) ||
+        (client.contact_number || '').toLowerCase().includes(search) ||
+        (client.email || '').toLowerCase().includes(search);
 
       const matchesSex = !clientSexFilter || client.sex === clientSexFilter;
       const isActive = client.consent_status && client.privacy_acknowledged;
