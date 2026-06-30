@@ -24,11 +24,23 @@ returns trigger
 language plpgsql
 set search_path = public, pg_temp
 as $$
+declare
+  candidate_code text;
 begin
   -- Never trust a browser-generated code. Older deployed app versions may send
   -- a stale non-empty value, so every insert receives a fresh server-side code.
-  new.client_code :=
-    'CLT-' || lpad(nextval('public.client_code_seq')::text, 3, '0');
+  loop
+    candidate_code :=
+      'CLT-' || lpad(nextval('public.client_code_seq')::text, 3, '0');
+
+    exit when not exists (
+      select 1
+      from public.clients
+      where client_code = candidate_code
+    );
+  end loop;
+
+  new.client_code := candidate_code;
 
   return new;
 end;
