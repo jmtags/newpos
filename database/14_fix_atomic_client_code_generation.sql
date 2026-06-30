@@ -9,20 +9,20 @@ as $$
 declare
   next_client_number bigint;
 begin
-  if new.client_code is null or btrim(new.client_code) = '' then
-    -- This lock is held until the insert transaction finishes.
-    perform pg_advisory_xact_lock(hashtext('public.clients.client_code'));
+  -- Never trust a browser-generated code. Older deployed app versions may send
+  -- a stale non-empty value, so every insert receives a fresh server-side code.
+  -- This lock is held until the insert transaction finishes.
+  perform pg_advisory_xact_lock(hashtext('public.clients.client_code'));
 
-    select coalesce(
-      max(substring(client_code from '^CLT-([0-9]+)$')::bigint),
-      0
-    ) + 1
-    into next_client_number
-    from public.clients;
+  select coalesce(
+    max(substring(client_code from '^CLT-([0-9]+)$')::bigint),
+    0
+  ) + 1
+  into next_client_number
+  from public.clients;
 
-    new.client_code :=
-      'CLT-' || lpad(next_client_number::text, 3, '0');
-  end if;
+  new.client_code :=
+    'CLT-' || lpad(next_client_number::text, 3, '0');
 
   return new;
 end;
