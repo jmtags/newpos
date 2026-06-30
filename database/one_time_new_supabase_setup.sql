@@ -62,6 +62,38 @@ create table if not exists public.clients (
 create index if not exists clients_full_name_idx on public.clients (full_name);
 create index if not exists clients_client_code_idx on public.clients (client_code);
 
+create or replace function public.assign_client_code()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  next_client_number bigint;
+begin
+  if new.client_code is null or btrim(new.client_code) = '' then
+    -- Serialize code allocation so concurrent inserts cannot choose the same number.
+    perform pg_advisory_xact_lock(hashtext('public.clients.client_code'));
+
+    select coalesce(
+      max(substring(client_code from '^CLT-([0-9]+)$')::bigint),
+      0
+    ) + 1
+    into next_client_number
+    from public.clients;
+
+    new.client_code :=
+      'CLT-' || lpad(next_client_number::text, 3, '0');
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_clients_assign_client_code on public.clients;
+create trigger trg_clients_assign_client_code
+before insert on public.clients
+for each row execute function public.assign_client_code();
+
 drop trigger if exists trg_clients_set_updated_at on public.clients;
 create trigger trg_clients_set_updated_at
 before update on public.clients
@@ -74,6 +106,7 @@ create table if not exists public.services (
   description text,
   default_price numeric not null default 0,
   duration_minutes integer not null default 60,
+  requires_case_management boolean not null default false,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -81,6 +114,11 @@ create table if not exists public.services (
 
 create index if not exists services_name_idx on public.services (name);
 create index if not exists services_is_active_idx on public.services (is_active);
+alter table public.services
+  add column if not exists requires_case_management boolean not null default false;
+create index if not exists services_requires_case_management_idx
+  on public.services (requires_case_management)
+  where requires_case_management = true;
 
 drop trigger if exists trg_services_set_updated_at on public.services;
 create trigger trg_services_set_updated_at
