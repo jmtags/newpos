@@ -56,6 +56,7 @@ export type ExpenseInput = Pick<
 >;
 
 const expenseSelect = '*, expense_categories(name)';
+const receiptBucket = 'expense-receipts';
 
 export const expenseService = {
   async getCategories(includeInactive = true) {
@@ -127,6 +128,35 @@ export const expenseService = {
 
   async voidExpense(id: string) {
     return this.updateExpense(id, { status: 'Void' });
+  },
+
+  async uploadReceipt(file: File, authUserId: string) {
+    const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+    const safeExtension = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(extension)
+      ? extension
+      : 'jpg';
+    const path = `${authUserId}/${new Date().getFullYear()}/${crypto.randomUUID()}.${safeExtension}`;
+    const { error } = await supabase.storage
+      .from(receiptBucket)
+      .upload(path, file, {
+        cacheControl: '3600',
+        contentType: file.type,
+        upsert: false
+      });
+
+    if (error) throw error;
+    return path;
+  },
+
+  async getReceiptUrl(receiptPath: string) {
+    if (/^https?:\/\//i.test(receiptPath)) return receiptPath;
+
+    const { data, error } = await supabase.storage
+      .from(receiptBucket)
+      .createSignedUrl(receiptPath, 60 * 60);
+
+    if (error) throw error;
+    return data.signedUrl;
   },
 
   async getPayments(startDate: string, endDate: string) {

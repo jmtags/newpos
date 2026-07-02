@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ExternalLink,
+  ImagePlus,
   FolderCog,
   Pencil,
   Plus,
@@ -58,6 +59,8 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
   const [formOpen, setFormOpen] = useState(false);
   const [categoriesOpen, setCategoriesOpen] = useState(false);
   const [newCategory, setNewCategory] = useState('');
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] = useState('');
 
   const load = async () => {
     try {
@@ -113,11 +116,15 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
   const openAdd = () => {
     setEditing(null);
     setForm({ ...emptyForm(), created_by_user_id: currentUser?.id || null });
+    setReceiptFile(null);
+    setReceiptPreview('');
     setFormOpen(true);
   };
 
-  const openEdit = (expense: Expense) => {
+  const openEdit = async (expense: Expense) => {
     setEditing(expense);
+    setReceiptFile(null);
+    setReceiptPreview('');
     setForm({
       category_id: expense.category_id,
       expense_date: expense.expense_date,
@@ -134,6 +141,44 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
       created_by_user_id: expense.created_by_user_id
     });
     setFormOpen(true);
+
+    if (expense.receipt_url) {
+      try {
+        setReceiptPreview(await expenseService.getReceiptUrl(expense.receipt_url));
+      } catch {
+        setReceiptPreview('');
+      }
+    }
+  };
+
+  const selectReceipt = (file?: File) => {
+    if (!file) return;
+
+    if (!['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type)) {
+      alert('Please select a JPG, PNG, WebP, or GIF image.');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Receipt image must be 5 MB or smaller.');
+      return;
+    }
+
+    setReceiptFile(file);
+    const reader = new FileReader();
+    reader.onload = () => setReceiptPreview(String(reader.result || ''));
+    reader.readAsDataURL(file);
+  };
+
+  const openReceipt = async (receiptPath: string) => {
+    const receiptWindow = window.open('', '_blank');
+    try {
+      const url = await expenseService.getReceiptUrl(receiptPath);
+      if (receiptWindow) receiptWindow.location.href = url;
+      else window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (err: any) {
+      receiptWindow?.close();
+      alert(`Unable to open receipt: ${err.message}`);
+    }
   };
 
   const save = async () => {
@@ -148,6 +193,18 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
 
     try {
       setSaving(true);
+      let receiptPath = form.receipt_url?.trim() || null;
+
+      if (receiptFile) {
+        if (!currentUser?.auth_user_id) {
+          throw new Error('Your signed-in account could not be identified.');
+        }
+        receiptPath = await expenseService.uploadReceipt(
+          receiptFile,
+          currentUser.auth_user_id
+        );
+      }
+
       const payload = {
         ...form,
         category_id: form.category_id || null,
@@ -155,7 +212,7 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
         vendor: form.vendor?.trim() || null,
         payment_method: form.payment_method?.trim() || null,
         reference_number: form.reference_number?.trim() || null,
-        receipt_url: form.receipt_url?.trim() || null,
+        receipt_url: receiptPath,
         notes: form.notes?.trim() || null
       };
       if (editing) await expenseService.updateExpense(editing.id, payload);
@@ -273,9 +330,9 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
                       {expense.receipt_url && (
-                        <a className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-50" href={expense.receipt_url} target="_blank" rel="noreferrer" title="Open receipt">
+                        <button className="rounded-lg border border-slate-300 p-2 text-slate-600 hover:bg-slate-50" onClick={() => openReceipt(expense.receipt_url!)} title="Open receipt">
                           <ExternalLink className="h-4 w-4" />
-                        </a>
+                        </button>
                       )}
                       <Button size="sm" variant="outline" onClick={() => openEdit(expense)}><Pencil className="h-4 w-4" /></Button>
                       {expense.status !== 'Void' && (
@@ -313,7 +370,38 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
           <Select label="Recurrence" value={form.recurrence} onChange={(e) => setForm({ ...form, recurrence: e.target.value as ExpenseRecurrence })} options={['One-time', 'Weekly', 'Monthly', 'Quarterly', 'Yearly'].map((value) => ({ value, label: value }))} />
           <Input label="Payment Method" value={form.payment_method || ''} onChange={(e) => setForm({ ...form, payment_method: e.target.value })} />
           <Input label="Reference Number" value={form.reference_number || ''} onChange={(e) => setForm({ ...form, reference_number: e.target.value })} />
-          <Input label="Receipt URL" placeholder="https://..." value={form.receipt_url || ''} onChange={(e) => setForm({ ...form, receipt_url: e.target.value })} />
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">
+              Receipt Image
+            </label>
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 px-4 py-3 text-sm text-slate-600 transition-colors hover:border-teal-500 hover:bg-teal-50">
+              <ImagePlus className="h-5 w-5 text-teal-600" />
+              {receiptFile ? receiptFile.name : 'Upload receipt picture'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="hidden"
+                onChange={(event) => selectReceipt(event.target.files?.[0])}
+              />
+            </label>
+            <p className="mt-1 text-xs text-slate-500">JPG, PNG, WebP, or GIF · maximum 5 MB</p>
+          </div>
+          <Input label="External Receipt URL (optional)" placeholder="https://..." value={receiptFile ? '' : form.receipt_url || ''} disabled={Boolean(receiptFile)} onChange={(e) => {
+            setForm({ ...form, receipt_url: e.target.value });
+            setReceiptPreview(e.target.value);
+          }} />
+          {receiptPreview && (
+            <div className="md:col-span-2">
+              <p className="mb-1 text-sm font-medium text-slate-700">Receipt Preview</p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <img
+                  src={receiptPreview}
+                  alt="Receipt preview"
+                  className="max-h-64 max-w-full rounded object-contain"
+                />
+              </div>
+            </div>
+          )}
           <Input label="Notes" value={form.notes || ''} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
         </div>
         <div className="mt-6 flex justify-end gap-2">
