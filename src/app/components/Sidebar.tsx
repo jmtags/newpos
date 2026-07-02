@@ -17,7 +17,9 @@ import {
   DoorOpen,
   ClipboardList,
   Bot,
-  FolderKanban
+  FolderKanban,
+  WalletCards,
+  TrendingUp
 } from 'lucide-react';
 import { canAccessPage } from '../lib/accessControl';
 import type { AppUser } from '../services/userService';
@@ -53,6 +55,11 @@ const schedulingItems = [
   { id: 'associateAvailability', label: 'Associate Availability', icon: CalendarClock }
 ];
 
+const financeItems = [
+  { id: 'expenses', label: 'Expense Ledger', icon: WalletCards },
+  { id: 'profitability', label: 'Profitability', icon: TrendingUp }
+];
+
 export const Sidebar: React.FC<SidebarProps> = ({
   currentPage,
   onPageChange,
@@ -73,6 +80,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const visibleSchedulingItems = schedulingItems.filter((item) =>
     canAccessPage(currentRole, item.id)
   );
+  const visibleFinanceItems = ['admin', 'manager'].includes(currentRole || '')
+    ? financeItems
+    : [];
 
   const renderMenuButton = (item: typeof menuItems[number]) => {
     const Icon = item.icon;
@@ -139,6 +149,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
               <ul className="space-y-1">
                 {visibleSchedulingItems.map(renderMenuButton)}
+              </ul>
+            </>
+          )}
+
+          {visibleFinanceItems.length > 0 && (
+            <>
+              <div className="mt-5 mb-2 px-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Finance
+              </div>
+
+              <ul className="space-y-1">
+                {visibleFinanceItems.map(renderMenuButton)}
               </ul>
             </>
           )}

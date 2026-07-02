@@ -25,6 +25,8 @@ import { RoomsManagement } from './pages/RoomsManagement';
 import { AssociateAvailability } from './pages/AssociateAvailability';
 import { AIAssistant } from './pages/AIAssistant';
 import { CaseManagement } from './pages/CaseManagement';
+import { Expenses } from './pages/Expenses';
+import { Profitability } from './pages/Profitability';
 import {
   canAccessPage,
   caseOnlyRoles,
@@ -241,6 +243,8 @@ export default function App() {
       appointments: 'Appointments',
       rooms: 'Rooms',
       associateAvailability: 'Associate Availability',
+      expenses: 'Expense Ledger',
+      profitability: 'Profitability',
       appointmentCreate: 'Create Appointment',
       appointmentEdit: 'Edit Appointment',
       appointmentDetails: 'Appointment Details'
@@ -291,6 +295,12 @@ export default function App() {
 
       case 'settings':
         return <Settings />;
+
+      case 'expenses':
+        return <Expenses currentUser={currentUser} />;
+
+      case 'profitability':
+        return <Profitability />;
 
       case 'scheduleCalendar':
         return (
