@@ -26,11 +26,22 @@ create table if not exists public.users (
   full_name text not null,
   email text not null unique,
   role text not null default 'regular_user'
-    check (role in ('admin', 'manager', 'regular_user')),
+    check (role in (
+      'admin',
+      'manager',
+      'case_staff',
+      'associate_user',
+      'case_viewer',
+      'regular_user'
+    )),
   is_active boolean not null default true,
+  must_change_password boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.users
+  add column if not exists must_change_password boolean not null default false;
 
 create index if not exists users_auth_user_id_idx on public.users (auth_user_id);
 create index if not exists users_role_idx on public.users (role);
@@ -630,10 +641,13 @@ grant execute on function public.is_scheduling_user(uuid) to authenticated;
 grant execute on function public.ai_can_use_assistant(uuid) to authenticated;
 grant execute on function public.ai_is_admin_user(uuid) to authenticated;
 
+drop function if exists public.admin_create_user(text, text, text, boolean);
+
 create or replace function public.admin_create_user(
   new_full_name text,
   new_email text,
   new_role text,
+  new_password text,
   new_is_active boolean default true
 )
 returns public.users
@@ -650,8 +664,19 @@ begin
     raise exception 'Only admins can create users.';
   end if;
 
-  if new_role not in ('admin', 'manager', 'regular_user') then
+  if new_role not in (
+    'admin',
+    'manager',
+    'case_staff',
+    'associate_user',
+    'case_viewer',
+    'regular_user'
+  ) then
     raise exception 'Invalid user role: %', new_role;
+  end if;
+
+  if length(coalesce(new_password, '')) < 8 then
+    raise exception 'Temporary password must be at least 8 characters.';
   end if;
 
   select id
@@ -659,10 +684,13 @@ begin
   from auth.users
   where lower(email) = lower(new_email);
 
-  if new_auth_user_id is null then
-    new_auth_user_id := gen_random_uuid();
+  if new_auth_user_id is not null then
+    raise exception 'A user with this email already exists.';
+  end if;
 
-    insert into auth.users (
+  new_auth_user_id := gen_random_uuid();
+
+  insert into auth.users (
       id,
       instance_id,
       aud,
@@ -690,7 +718,7 @@ begin
       'authenticated',
       'authenticated',
       lower(new_email),
-      extensions.crypt(gen_random_uuid()::text || random()::text, extensions.gen_salt('bf')),
+      extensions.crypt(new_password, extensions.gen_salt('bf')),
       now(),
       '{"provider":"email","providers":["email"]}'::jsonb,
       jsonb_build_object('full_name', new_full_name),
@@ -705,9 +733,9 @@ begin
       '',
       '',
       ''
-    );
+  );
 
-    insert into auth.identities (
+  insert into auth.identities (
       id,
       provider_id,
       user_id,
@@ -726,26 +754,106 @@ begin
       now(),
       now(),
       now()
-    );
-  end if;
+  );
 
-  insert into public.users (auth_user_id, full_name, email, role, is_active)
-  values (new_auth_user_id, new_full_name, lower(new_email), new_role, new_is_active)
-  on conflict (email) do update
-  set
-    auth_user_id = excluded.auth_user_id,
-    full_name = excluded.full_name,
-    role = excluded.role,
-    is_active = excluded.is_active,
-    updated_at = now()
+  insert into public.users (
+    auth_user_id,
+    full_name,
+    email,
+    role,
+    is_active,
+    must_change_password
+  )
+  values (
+    new_auth_user_id,
+    new_full_name,
+    lower(new_email),
+    new_role,
+    new_is_active,
+    true
+  )
   returning * into created_user;
 
   return created_user;
 end;
 $$;
 
-revoke all on function public.admin_create_user(text, text, text, boolean) from public;
-grant execute on function public.admin_create_user(text, text, text, boolean) to authenticated;
+revoke all on function public.admin_create_user(text, text, text, text, boolean) from public;
+grant execute on function public.admin_create_user(text, text, text, text, boolean) to authenticated;
+
+create or replace function public.admin_set_user_password(
+  target_user_id uuid,
+  new_password text
+)
+returns public.users
+language plpgsql
+security definer
+set search_path = public, auth
+set row_security = off
+as $$
+declare
+  target_user public.users;
+begin
+  if not public.is_admin_user(auth.uid()) then
+    raise exception 'Only admins can change another user''s password.';
+  end if;
+
+  if length(coalesce(new_password, '')) < 8 then
+    raise exception 'Temporary password must be at least 8 characters.';
+  end if;
+
+  select *
+  into target_user
+  from public.users
+  where id = target_user_id;
+
+  if target_user.id is null or target_user.auth_user_id is null then
+    raise exception 'User account was not found.';
+  end if;
+
+  update auth.users
+  set
+    encrypted_password = extensions.crypt(new_password, extensions.gen_salt('bf')),
+    updated_at = now()
+  where id = target_user.auth_user_id;
+
+  if not found then
+    raise exception 'Authentication account was not found.';
+  end if;
+
+  update public.users
+  set
+    must_change_password = true,
+    updated_at = now()
+  where id = target_user_id
+  returning * into target_user;
+
+  return target_user;
+end;
+$$;
+
+create or replace function public.complete_password_change()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  update public.users
+  set
+    must_change_password = false,
+    updated_at = now()
+  where auth_user_id = auth.uid();
+
+  return found;
+end;
+$$;
+
+revoke all on function public.admin_set_user_password(uuid, text) from public;
+revoke all on function public.complete_password_change() from public;
+grant execute on function public.admin_set_user_password(uuid, text) to authenticated;
+grant execute on function public.complete_password_change() to authenticated;
 
 create or replace function public.audit_clinic_tax_settings_changes()
 returns trigger
@@ -1443,6 +1551,7 @@ alter table public.users enable row level security;
 drop policy if exists users_select_own_or_admin on public.users;
 drop policy if exists users_insert_admin_only on public.users;
 drop policy if exists users_update_own_or_admin on public.users;
+drop policy if exists users_update_admin_only on public.users;
 drop policy if exists users_delete_admin_only on public.users;
 
 create policy users_select_own_or_admin
@@ -1460,18 +1569,12 @@ for insert
 to authenticated
 with check (public.is_admin_user(auth.uid()));
 
-create policy users_update_own_or_admin
+create policy users_update_admin_only
 on public.users
 for update
 to authenticated
-using (
-  auth_user_id = auth.uid()
-  or public.is_admin_user(auth.uid())
-)
-with check (
-  auth_user_id = auth.uid()
-  or public.is_admin_user(auth.uid())
-);
+using (public.is_admin_user(auth.uid()))
+with check (public.is_admin_user(auth.uid()));
 
 create policy users_delete_admin_only
 on public.users

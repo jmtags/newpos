@@ -5,17 +5,38 @@ import { Card } from '../components/Card';
 import { Input } from '../components/Input';
 import { settingsService } from '../services/settingsService';
 import { supabase } from '../lib/supabaseClient';
+import { userService } from '../services/userService';
 
 interface ResetPasswordProps {
-  onComplete: () => void;
+  mode: 'recovery' | 'required' | 'change';
+  onComplete: () => void | Promise<void>;
+  onCancel?: () => void;
 }
 
-export const ResetPassword: React.FC<ResetPasswordProps> = ({ onComplete }) => {
+export const ResetPassword: React.FC<ResetPasswordProps> = ({
+  mode,
+  onComplete,
+  onCancel
+}) => {
+  const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const needsCurrentPassword = mode !== 'recovery';
+  const title =
+    mode === 'required'
+      ? 'Change Temporary Password'
+      : mode === 'change'
+        ? 'Change Password'
+        : 'Set New Password';
+  const description =
+    mode === 'required'
+      ? 'For security, choose a new password before continuing.'
+      : mode === 'change'
+        ? 'Enter your current password and choose a new one.'
+        : 'Enter a new password for your account.';
 
   useEffect(() => {
     const loadClinicLogo = async () => {
@@ -34,6 +55,11 @@ export const ResetPassword: React.FC<ResetPasswordProps> = ({ onComplete }) => {
     event.preventDefault();
     setError('');
 
+    if (needsCurrentPassword && !currentPassword) {
+      setError('Enter your current password.');
+      return;
+    }
+
     if (password.length < 8) {
       setError('Password must be at least 8 characters.');
       return;
@@ -44,14 +70,27 @@ export const ResetPassword: React.FC<ResetPasswordProps> = ({ onComplete }) => {
       return;
     }
 
+    if (needsCurrentPassword && password === currentPassword) {
+      setError('Your new password must be different from your current password.');
+      return;
+    }
+
     try {
       setSaving(true);
-      const { error } = await supabase.auth.updateUser({ password });
+      const { error } = await supabase.auth.updateUser({
+        password,
+        ...(needsCurrentPassword ? { currentPassword } : {})
+      });
 
       if (error) throw error;
 
-      await supabase.auth.signOut();
-      onComplete();
+      await userService.completePasswordChange();
+
+      if (mode === 'recovery') {
+        await supabase.auth.signOut({ scope: 'local' });
+      }
+
+      await onComplete();
     } catch (error: any) {
       setError(error.message || 'Unable to update password.');
     } finally {
@@ -74,20 +113,31 @@ export const ResetPassword: React.FC<ResetPasswordProps> = ({ onComplete }) => {
               <KeyRound className="w-8 h-8 text-white" />
             )}
           </div>
-          <h1 className="text-2xl font-semibold text-slate-900">
-            Set New Password
-          </h1>
+          <h1 className="text-2xl font-semibold text-slate-900">{title}</h1>
           <p className="text-sm text-slate-600 mt-1">
-            Enter a new password for your account.
+            {description}
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {needsCurrentPassword && (
+            <Input
+              type="password"
+              label={mode === 'required' ? 'Temporary Password' : 'Current Password'}
+              value={currentPassword}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          )}
+
           <Input
             type="password"
             label="New Password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
+            minLength={8}
             required
           />
 
@@ -96,6 +146,8 @@ export const ResetPassword: React.FC<ResetPasswordProps> = ({ onComplete }) => {
             label="Confirm Password"
             value={confirmPassword}
             onChange={(event) => setConfirmPassword(event.target.value)}
+            autoComplete="new-password"
+            minLength={8}
             required
           />
 
@@ -105,9 +157,22 @@ export const ResetPassword: React.FC<ResetPasswordProps> = ({ onComplete }) => {
             </p>
           )}
 
-          <Button type="submit" className="w-full" disabled={saving}>
-            {saving ? 'Saving...' : 'Update Password'}
-          </Button>
+          <div className="flex gap-2">
+            <Button type="submit" className="flex-1" disabled={saving}>
+              {saving ? 'Saving...' : 'Update Password'}
+            </Button>
+
+            {mode === 'change' && onCancel && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onCancel}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+            )}
+          </div>
         </form>
       </Card>
     </div>

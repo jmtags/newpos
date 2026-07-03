@@ -34,6 +34,7 @@ import {
 } from './lib/accessControl';
 
 type AppointmentReturnPage = 'appointments' | 'scheduleCalendar';
+type PasswordMode = 'recovery' | 'change' | null;
 
 const hasPasswordRecoveryUrl = () => {
   const searchParams = new URLSearchParams(window.location.search);
@@ -45,7 +46,7 @@ const hasPasswordRecoveryUrl = () => {
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
-  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
+  const [passwordMode, setPasswordMode] = useState<PasswordMode>(null);
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
@@ -84,6 +85,7 @@ export default function App() {
         email: email || '',
         role: 'regular_user',
         is_active: true,
+        must_change_password: false,
         created_at: '',
         updated_at: ''
       });
@@ -101,7 +103,7 @@ export default function App() {
       const isRecoveryLink = hasPasswordRecoveryUrl();
 
       setIsLoggedIn(Boolean(session));
-      setIsPasswordRecovery(isRecoveryLink);
+      setPasswordMode(isRecoveryLink ? 'recovery' : null);
       await loadCurrentUser(session?.user.id, session?.user.email);
       setCheckingSession(false);
     };
@@ -111,7 +113,7 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange(
       (event, session) => {
         if (event === 'PASSWORD_RECOVERY') {
-          setIsPasswordRecovery(true);
+          setPasswordMode('recovery');
           setCheckingSession(false);
           return;
         }
@@ -161,7 +163,7 @@ export default function App() {
     setAppointmentReturnPage('appointments');
     setSchedulingCalendarState(undefined);
     setIsMobileSidebarOpen(false);
-    setIsPasswordRecovery(false);
+    setPasswordMode(null);
   };
 
   const handleLogout = async () => {
@@ -171,7 +173,7 @@ export default function App() {
     setCurrentUser(null);
     setCurrentPage('dashboard');
     setIsMobileSidebarOpen(false);
-    setIsPasswordRecovery(false);
+    setPasswordMode(null);
 
     try {
       const { error } = await supabase.auth.signOut({ scope: 'local' });
@@ -393,11 +395,12 @@ export default function App() {
     );
   }
 
-  if (isPasswordRecovery) {
+  if (passwordMode === 'recovery') {
     return (
       <ResetPassword
+        mode="recovery"
         onComplete={() => {
-          setIsPasswordRecovery(false);
+          setPasswordMode(null);
           setIsLoggedIn(false);
         }}
       />
@@ -406,6 +409,28 @@ export default function App() {
 
   if (!isLoggedIn) {
     return <Login onLogin={handleLogin} />;
+  }
+
+  if (currentUser?.must_change_password) {
+    return (
+      <ResetPassword
+        mode="required"
+        onComplete={async () => {
+          const { data } = await supabase.auth.getSession();
+          await loadCurrentUser(data.session?.user.id, data.session?.user.email);
+        }}
+      />
+    );
+  }
+
+  if (passwordMode === 'change') {
+    return (
+      <ResetPassword
+        mode="change"
+        onComplete={() => setPasswordMode(null)}
+        onCancel={() => setPasswordMode(null)}
+      />
+    );
   }
 
   const shouldLoadPosData =
@@ -429,7 +454,7 @@ export default function App() {
             onMobileMenuToggle={toggleMobileSidebar}
             currentUser={currentUser}
             onLogout={handleLogout}
-            onChangePassword={() => setIsPasswordRecovery(true)}
+            onChangePassword={() => setPasswordMode('change')}
           />
 
           <main className="flex-1 overflow-y-auto p-6">

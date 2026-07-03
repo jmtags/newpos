@@ -5,7 +5,6 @@ import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Input } from '../components/Input';
 import { Select } from '../components/Select';
-import { supabase } from '../lib/supabaseClient';
 import { roleLabels } from '../lib/accessControl';
 import { userService, AppUser, UserRole } from '../services/userService';
 
@@ -32,7 +31,9 @@ const emptyForm = {
   full_name: '',
   email: '',
   role: 'regular_user' as UserRole,
-  is_active: true
+  is_active: true,
+  password: '',
+  confirm_password: ''
 };
 
 export const UserManagement: React.FC = () => {
@@ -90,6 +91,21 @@ export const UserManagement: React.FC = () => {
       return;
     }
 
+    if (!editing && form.password.length < 8) {
+      alert('Temporary password must be at least 8 characters.');
+      return;
+    }
+
+    if (editing && form.password && form.password.length < 8) {
+      alert('The new temporary password must be at least 8 characters.');
+      return;
+    }
+
+    if (form.password !== form.confirm_password) {
+      alert('Passwords do not match.');
+      return;
+    }
+
     try {
       setSaving(true);
 
@@ -102,9 +118,11 @@ export const UserManagement: React.FC = () => {
 
       if (editing) {
         await userService.updateUser(form.id, payload);
+        if (form.password) {
+          await userService.setUserPassword(form.id, form.password);
+        }
       } else {
-        await userService.addUser(payload);
-        await sendPasswordReset(payload.email);
+        await userService.addUser(payload, form.password);
       }
 
       resetForm();
@@ -122,7 +140,9 @@ export const UserManagement: React.FC = () => {
       full_name: user.full_name || '',
       email: user.email || '',
       role: user.role || 'regular_user',
-      is_active: user.is_active
+      is_active: user.is_active,
+      password: '',
+      confirm_password: ''
     });
     setEditing(true);
   };
@@ -136,20 +156,6 @@ export const UserManagement: React.FC = () => {
       if (form.id === id) resetForm();
     } catch (error: any) {
       alert(`Error deleting user: ${error.message}`);
-    }
-  };
-
-  const sendPasswordReset = async (email: string) => {
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/?type=recovery`
-      });
-
-      if (error) throw error;
-
-      alert(`Password reset email sent to ${email}.`);
-    } catch (error: any) {
-      alert(`Error sending password reset: ${error.message}`);
     }
   };
 
@@ -193,6 +199,26 @@ export const UserManagement: React.FC = () => {
             onChange={(e) =>
               setForm({ ...form, role: e.target.value as UserRole })
             }
+          />
+
+          <Input
+            label={editing ? 'New Temporary Password (optional)' : 'Temporary Password'}
+            type="password"
+            value={form.password}
+            onChange={(e) => setForm({ ...form, password: e.target.value })}
+            minLength={8}
+            autoComplete="new-password"
+          />
+
+          <Input
+            label="Confirm Password"
+            type="password"
+            value={form.confirm_password}
+            onChange={(e) =>
+              setForm({ ...form, confirm_password: e.target.value })
+            }
+            minLength={8}
+            autoComplete="new-password"
           />
 
           <label className="flex items-center gap-3 md:mt-7">
@@ -285,9 +311,14 @@ export const UserManagement: React.FC = () => {
                   </td>
 
                   <td className="py-3 px-4 text-center">
-                    <Badge variant={user.is_active ? 'success' : 'default'}>
-                      {user.is_active ? 'Active' : 'Inactive'}
-                    </Badge>
+                    <div className="flex flex-wrap justify-center gap-1">
+                      <Badge variant={user.is_active ? 'success' : 'default'}>
+                        {user.is_active ? 'Active' : 'Inactive'}
+                      </Badge>
+                      {user.must_change_password && (
+                        <Badge variant="info">Password change required</Badge>
+                      )}
+                    </div>
                   </td>
 
                   <td className="py-3 px-4">
@@ -303,7 +334,8 @@ export const UserManagement: React.FC = () => {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => sendPasswordReset(user.email)}
+                        onClick={() => editUser(user)}
+                        title="Set a temporary password"
                       >
                         <KeyRound className="w-4 h-4" />
                       </Button>
