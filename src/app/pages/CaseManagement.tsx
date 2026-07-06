@@ -24,6 +24,7 @@ import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
 import { Card } from '../components/Card';
 import { Input } from '../components/Input';
+import { Modal } from '../components/Modal';
 import { Select } from '../components/Select';
 import {
   CASE_STATUSES,
@@ -70,6 +71,15 @@ const REPORT_STATUSES = [
 ] as const;
 
 const PAYMENT_STATUSES = ['Paid', 'Partial', 'Unpaid', 'Overpaid', 'Void'] as const;
+
+const EMPTY_TASK_FORM = {
+  case_id: '',
+  title: '',
+  description: '',
+  assigned_to_associate_id: '',
+  due_date: '',
+  status: 'Pending' as CaseTaskStatus
+};
 
 const CASE_STATUS_ACCENTS: Record<string, string> = {
   New: 'bg-sky-500',
@@ -209,6 +219,8 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     }))
   });
   const [showWorkflowEditor, setShowWorkflowEditor] = useState(false);
+  const [isTaskDialogOpen, setIsTaskDialogOpen] = useState(false);
+  const [taskDialogError, setTaskDialogError] = useState('');
   const [workflowGroupForm, setWorkflowGroupForm] = useState({
     name: '',
     color: '#0f9d91'
@@ -247,14 +259,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     presenting_concern: '',
     internal_notes: ''
   });
-  const [taskForm, setTaskForm] = useState({
-    case_id: '',
-    title: '',
-    description: '',
-    assigned_to_associate_id: '',
-    due_date: '',
-    status: 'Pending' as CaseTaskStatus
-  });
+  const [taskForm, setTaskForm] = useState({ ...EMPTY_TASK_FORM });
   const [dashboardFilters, setDashboardFilters] = useState({
     date_from: '',
     date_to: '',
@@ -552,14 +557,40 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     }
   };
 
-  const handleCreateTask = async () => {
+  const openSelectedCaseTaskDialog = () => {
+    if (!selectedCase || !canManageCases) return;
+
+    setTaskForm({
+      ...EMPTY_TASK_FORM,
+      case_id: selectedCase.id,
+      assigned_to_associate_id: selectedCase.associate_id || ''
+    });
+    setTaskDialogError('');
+    setIsTaskDialogOpen(true);
+  };
+
+  const closeSelectedCaseTaskDialog = () => {
+    if (saving) return;
+    setIsTaskDialogOpen(false);
+    setTaskDialogError('');
+    setTaskForm({ ...EMPTY_TASK_FORM });
+  };
+
+  const handleCreateTask = async (fromDialog = false) => {
     if (!taskForm.case_id || !taskForm.title.trim()) {
-      setError('Please select a case and enter a task title.');
+      const message = 'Please select a case and enter a task title.';
+      if (fromDialog) {
+        setTaskDialogError(message);
+      } else {
+        setError(message);
+      }
       return;
     }
 
     try {
       setSaving(true);
+      setTaskDialogError('');
+      setError('');
       const created = await caseManagementService.createTask({
         case_id: taskForm.case_id,
         title: taskForm.title.trim(),
@@ -569,16 +600,17 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
         status: taskForm.status
       });
       setTasks((current) => [created, ...current]);
-      setTaskForm({
-        case_id: '',
-        title: '',
-        description: '',
-        assigned_to_associate_id: '',
-        due_date: '',
-        status: 'Pending'
-      });
+      setTaskForm({ ...EMPTY_TASK_FORM });
+      if (fromDialog) {
+        setIsTaskDialogOpen(false);
+      }
     } catch (err: any) {
-      setError(err.message || 'Unable to create task.');
+      const message = err.message || 'Unable to create task.';
+      if (fromDialog) {
+        setTaskDialogError(message);
+      } else {
+        setError(message);
+      }
     } finally {
       setSaving(false);
     }
@@ -1730,10 +1762,20 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     </Card>
   );
 
-  const renderTasks = (taskRows: CaseTask[], title = 'Case Tasks') => (
+  const renderTasks = (
+    taskRows: CaseTask[],
+    title = 'Case Tasks',
+    showSelectedCaseAction = false
+  ) => (
     <Card>
-      <div className="p-4 border-b border-slate-200">
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 p-4">
         <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+        {showSelectedCaseAction && canManageCases && (
+          <Button size="sm" onClick={openSelectedCaseTaskDialog}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            Add Task
+          </Button>
+        )}
       </div>
       <div className="divide-y divide-slate-100">
         {taskRows.map((task) => (
@@ -1837,7 +1879,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
             }
           />
           <div className="md:col-span-2 flex justify-end">
-            <Button onClick={handleCreateTask} disabled={saving}>
+            <Button onClick={() => void handleCreateTask(false)} disabled={saving}>
               <Plus className="w-4 h-4 mr-2" />
               Add Task
             </Button>
@@ -2008,7 +2050,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
           </Card>
         </div>
 
-        {renderTasks(caseTasks, 'Tasks')}
+        {renderTasks(caseTasks, 'Tasks', true)}
       </div>
     );
   };
@@ -2075,6 +2117,118 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
           {activeView === 'release' && renderCaseListView(releaseCases, 'Ready for Release')}
         </>
       )}
+
+      <Modal
+        isOpen={isTaskDialogOpen}
+        onClose={closeSelectedCaseTaskDialog}
+        title={`Add Task${selectedCase ? ` · ${selectedCase.case_number}` : ''}`}
+        size="md"
+      >
+        {selectedCase && (
+          <div className="space-y-5">
+            <div className="rounded-xl border border-teal-100 bg-teal-50/70 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
+                Selected Case
+              </p>
+              <p className="mt-1 font-semibold text-slate-900">
+                {selectedCase.case_number} · {selectedCase.client_name || 'Client'}
+              </p>
+              <p className="mt-1 text-sm text-slate-600">
+                {selectedCase.service_name || selectedCase.case_type}
+              </p>
+            </div>
+
+            {taskDialogError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {taskDialogError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="md:col-span-2">
+                <Input
+                  label="Task Title *"
+                  value={taskForm.title}
+                  onChange={(event) =>
+                    setTaskForm({ ...taskForm, title: event.target.value })
+                  }
+                  autoFocus
+                />
+              </div>
+              <Select
+                label="Assigned Associate"
+                value={taskForm.assigned_to_associate_id}
+                onChange={(event) =>
+                  setTaskForm({
+                    ...taskForm,
+                    assigned_to_associate_id: event.target.value
+                  })
+                }
+                options={[
+                  { value: '', label: 'Unassigned' },
+                  ...formOptions.associates.map((associate) => ({
+                    value: associate.id,
+                    label: associate.full_name
+                  }))
+                ]}
+              />
+              <Input
+                type="date"
+                label="Due Date"
+                value={taskForm.due_date}
+                onChange={(event) =>
+                  setTaskForm({ ...taskForm, due_date: event.target.value })
+                }
+              />
+              <Select
+                label="Status"
+                value={taskForm.status}
+                onChange={(event) =>
+                  setTaskForm({
+                    ...taskForm,
+                    status: event.target.value as CaseTaskStatus
+                  })
+                }
+                options={CASE_TASK_STATUSES.map((status) => ({
+                  value: status,
+                  label: status
+                }))}
+              />
+              <div className="md:col-span-2">
+                <label className="mb-1 block text-sm font-medium text-slate-700">
+                  Description
+                </label>
+                <textarea
+                  value={taskForm.description}
+                  onChange={(event) =>
+                    setTaskForm({ ...taskForm, description: event.target.value })
+                  }
+                  rows={4}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  placeholder="Add instructions or context for this task"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+              <Button
+                variant="outline"
+                onClick={closeSelectedCaseTaskDialog}
+                disabled={saving}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={() => void handleCreateTask(true)}
+                disabled={saving || !taskForm.title.trim()}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                {saving ? 'Adding...' : 'Add Task'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
