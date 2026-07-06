@@ -65,7 +65,33 @@ alter table public.users
     'associate_user',
     'case_viewer',
     'regular_user'
-  ));
+  )) not valid;
+
+-- Validate immediately when all existing rows already use supported roles.
+-- Otherwise, preserve legacy accounts for administrator review while the
+-- constraint still protects every new or updated row.
+do $$
+begin
+  if not exists (
+    select 1
+    from public.users
+    where role not in (
+      'admin',
+      'manager',
+      'case_staff',
+      'associate_user',
+      'case_viewer',
+      'regular_user'
+    )
+  ) then
+    alter table public.users
+      validate constraint users_role_check;
+  else
+    raise notice
+      'Legacy user roles were preserved. Review unsupported roles in public.users.';
+  end if;
+end;
+$$;
 
 -- A legacy users table did not enforce the authentication-account link.
 create unique index if not exists users_auth_user_id_idx
