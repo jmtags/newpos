@@ -17,9 +17,16 @@ In the Supabase SQL Editor, run these files completely and in this order:
 5. `12_connect_cases_to_pos_transactions.sql`
 6. `18_add_configurable_case_workflow.sql`
 7. `19_add_case_workflow_reordering.sql`
+8. `20_route_pos_cases_to_main_new.sql`
 
 The scripts are written to update an existing project safely. The final
 script requests a PostgREST schema-cache reload.
+
+Automatic POS case creation applies only to services with **Create a case
+automatically when this service is sold** enabled. Migration 20 routes those
+new cases to the active `MAIN_START` group's `MAIN_NEW` column. If that
+configuration is unavailable, it falls back to `New`, then the first active
+workflow column.
 
 After installation, verify the RPC exists:
 
