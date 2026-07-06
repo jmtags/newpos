@@ -24,11 +24,13 @@ import { AppointmentDetails } from './pages/AppointmentDetails';
 import { RoomsManagement } from './pages/RoomsManagement';
 import { AssociateAvailability } from './pages/AssociateAvailability';
 import { AIAssistant } from './pages/AIAssistant';
-import { CaseManagement } from './pages/CaseManagement';
+import { CaseManagementLogin } from './pages/CaseManagementLogin';
+import { CaseWorkspace } from './components/CaseWorkspace';
 import { Expenses } from './pages/Expenses';
 import { Profitability } from './pages/Profitability';
 import {
   canAccessPage,
+  caseModuleRoles,
   caseOnlyRoles,
   getDefaultPageForRole
 } from './lib/accessControl';
@@ -44,6 +46,8 @@ const hasPasswordRecoveryUrl = () => {
 };
 
 export default function App() {
+  const isCaseManagementRoute =
+    window.location.pathname.startsWith('/casemanagement');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [passwordMode, setPasswordMode] = useState<PasswordMode>(null);
@@ -140,13 +144,42 @@ export default function App() {
 
   useEffect(() => {
     if (
+      !isCaseManagementRoute &&
       isLoggedIn &&
       currentUser &&
       !canAccessPage(currentUser.role, currentPage)
     ) {
       setCurrentPage(getDefaultPageForRole(currentUser.role));
     }
-  }, [currentPage, currentUser?.role, isLoggedIn]);
+  }, [currentPage, currentUser?.role, isCaseManagementRoute, isLoggedIn]);
+
+  useEffect(() => {
+    if (
+      !isCaseManagementRoute
+      && isLoggedIn
+      && currentUser
+      && caseOnlyRoles.includes(currentUser.role)
+    ) {
+      window.location.replace('/casemanagement');
+    }
+  }, [currentUser, isCaseManagementRoute, isLoggedIn]);
+
+  useEffect(() => {
+    if (
+      isCaseManagementRoute
+      && !checkingSession
+      && !isLoggedIn
+      && passwordMode !== 'recovery'
+      && window.location.pathname !== '/casemanagement/login'
+    ) {
+      window.history.replaceState(null, '', '/casemanagement/login');
+    }
+  }, [
+    checkingSession,
+    isCaseManagementRoute,
+    isLoggedIn,
+    passwordMode
+  ]);
 
   const handleLogin = async () => {
     const { data } = await supabase.auth.getSession();
@@ -231,7 +264,6 @@ export default function App() {
     const titles: Record<string, string> = {
       dashboard: 'Dashboard',
       aiAssistant: 'AI Assistant',
-      cases: 'Case Management',
       pos: 'New Transaction',
       clients: 'Client Management',
       transactions: 'Transactions',
@@ -262,9 +294,6 @@ export default function App() {
 
       case 'aiAssistant':
         return <AIAssistant currentUser={currentUser} />;
-
-      case 'cases':
-        return <CaseManagement currentUser={currentUser} />;
 
       case 'pos':
         return <POS />;
@@ -408,7 +437,17 @@ export default function App() {
   }
 
   if (!isLoggedIn) {
-    return <Login onLogin={handleLogin} />;
+    return isCaseManagementRoute
+      ? <CaseManagementLogin onLogin={handleLogin} />
+      : <Login onLogin={handleLogin} />;
+  }
+
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <p className="text-sm text-slate-600">Loading user profile...</p>
+      </div>
+    );
   }
 
   if (currentUser?.must_change_password) {
@@ -430,6 +469,60 @@ export default function App() {
         onComplete={() => setPasswordMode(null)}
         onCancel={() => setPasswordMode(null)}
       />
+    );
+  }
+
+  if (isCaseManagementRoute) {
+    if (
+      !currentUser.is_active
+      || !caseModuleRoles.includes(currentUser.role)
+    ) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-lg">
+            <h1 className="text-xl font-semibold text-slate-900">
+              Case workspace access required
+            </h1>
+            <p className="mt-2 text-sm text-slate-600">
+              This account is not authorized to access Case Management.
+            </p>
+            <div className="mt-6 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => window.location.assign('/')}
+                className="rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-teal-700"
+              >
+                Return to POS Operations
+              </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <CaseWorkspace
+        currentUser={currentUser}
+        onLogout={handleLogout}
+        onChangePassword={() => setPasswordMode('change')}
+      />
+    );
+  }
+
+  if (caseOnlyRoles.includes(currentUser.role)) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <p className="text-sm text-slate-600">
+          Opening Case Management...
+        </p>
+      </div>
     );
   }
 

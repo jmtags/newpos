@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bell, ChevronDown, KeyRound, LogOut, Menu, User } from 'lucide-react';
+import {
+  Bell,
+  ChevronDown,
+  FolderKanban,
+  KeyRound,
+  LogOut,
+  Menu,
+  User
+} from 'lucide-react';
 import { roleLabels } from '../lib/accessControl';
 import type { AppUser } from '../services/userService';
 
@@ -113,6 +121,18 @@ export const Header: React.FC<HeaderProps> = ({
                   {currentUser?.email || displayRole}
                 </p>
               </div>
+
+              {['admin', 'manager'].includes(currentUser?.role || '') && (
+                <button
+                  type="button"
+                  onClick={() => window.location.assign('/casemanagement')}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                  role="menuitem"
+                >
+                  <FolderKanban className="w-4 h-4" />
+                  <span>Open Case Management</span>
+                </button>
+              )}
 
               <button
                 type="button"

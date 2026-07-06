@@ -1,17 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BarChart3,
   CalendarDays,
   CheckCircle2,
   ClipboardList,
   Clock,
   Eye,
   FileCheck2,
+  Flag,
   FolderKanban,
+  GripVertical,
   ListChecks,
   Plus,
   RefreshCw,
-  Search
+  Search,
+  UserRound
 } from 'lucide-react';
 import { Badge } from '../components/Badge';
 import { Button } from '../components/Button';
@@ -32,9 +36,13 @@ import type { AppUser } from '../services/userService';
 
 interface CaseManagementProps {
   currentUser: AppUser | null;
+  workspaceView?: CaseView;
+  onWorkspaceViewChange?: (view: CaseView) => void;
+  showViewNavigation?: boolean;
 }
 
-type CaseView =
+export type CaseView =
+  | 'board'
   | 'dashboard'
   | 'all'
   | 'mine'
@@ -56,6 +64,29 @@ const REPORT_STATUSES = [
 ] as const;
 
 const PAYMENT_STATUSES = ['Paid', 'Partial', 'Unpaid', 'Overpaid', 'Void'] as const;
+
+const CASE_STATUS_ACCENTS: Record<CaseStatus, string> = {
+  New: 'bg-sky-500',
+  Scheduled: 'bg-indigo-500',
+  'Testing Ongoing': 'bg-violet-500',
+  'Testing Completed': 'bg-purple-500',
+  Scoring: 'bg-fuchsia-500',
+  Interpretation: 'bg-cyan-500',
+  'Report Writing': 'bg-blue-500',
+  'For Review': 'bg-amber-500',
+  'For Revision': 'bg-orange-500',
+  'Ready for Release': 'bg-emerald-500',
+  Released: 'bg-teal-500',
+  Closed: 'bg-slate-500',
+  Cancelled: 'bg-rose-500'
+};
+
+const CASE_PRIORITY_STYLES: Record<CaseRecord['priority'], string> = {
+  Low: 'bg-slate-100 text-slate-600',
+  Normal: 'bg-sky-50 text-sky-700',
+  High: 'bg-orange-50 text-orange-700',
+  Urgent: 'bg-rose-50 text-rose-700'
+};
 
 const statusBadgeVariant = (status: string): 'success' | 'warning' | 'danger' | 'info' | 'default' => {
   if (['Released', 'Closed', 'Completed'].includes(status)) return 'success';
@@ -141,8 +172,14 @@ const isReleasedThisMonth = (caseItem: CaseRecord) => {
   );
 };
 
-export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) => {
-  const [activeView, setActiveView] = useState<CaseView>('dashboard');
+export const CaseManagement: React.FC<CaseManagementProps> = ({
+  currentUser,
+  workspaceView,
+  onWorkspaceViewChange,
+  showViewNavigation = true
+}) => {
+  const [internalActiveView, setInternalActiveView] =
+    useState<CaseView>('board');
   const [cases, setCases] = useState<CaseRecord[]>([]);
   const [tasks, setTasks] = useState<CaseTask[]>([]);
   const [selectedCase, setSelectedCase] = useState<CaseRecord | null>(null);
@@ -154,6 +191,8 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [movingCaseId, setMovingCaseId] = useState<string | null>(null);
+  const [dragOverStatus, setDragOverStatus] = useState<CaseStatus | null>(null);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusNote, setStatusNote] = useState('');
@@ -191,6 +230,11 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
   });
 
   const role = currentUser?.role;
+  const activeView = workspaceView || internalActiveView;
+  const setActiveView = (view: CaseView) => {
+    setInternalActiveView(view);
+    onWorkspaceViewChange?.(view);
+  };
   const canViewPayment = ['admin', 'manager', 'case_staff'].includes(role || '');
   const canManageCases = ['admin', 'manager', 'case_staff'].includes(role || '');
   const canEditTasks = ['admin', 'manager', 'case_staff', 'associate_user'].includes(role || '');
@@ -411,7 +455,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
     setCases((current) =>
       current.map((caseItem) => (caseItem.id === updated.id ? updated : caseItem))
     );
-    setSelectedCase(updated);
+    setSelectedCase((current) => current?.id === updated.id ? updated : current);
   };
 
   const handleUpdateStatus = async () => {
@@ -514,6 +558,55 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
       setError(err.message || 'Unable to update task.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleBoardStatusChange = async (
+    caseItem: CaseRecord,
+    status: CaseStatus
+  ) => {
+    if (!canManageCases || caseItem.status === status) return;
+
+    if (
+      ['Released', 'Closed', 'Cancelled'].includes(status)
+      && !window.confirm(
+        `Move ${caseItem.case_number} from ${caseItem.status} to ${status}?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      setMovingCaseId(caseItem.id);
+      setError('');
+      const updated = await caseManagementService.updateCaseStatus(
+        caseItem.id,
+        status,
+        `Moved on Kanban board from ${caseItem.status} to ${status}`
+      );
+      refreshSelectedCase(updated);
+    } catch (err: any) {
+      setError(err.message || 'Unable to move the case.');
+    } finally {
+      setMovingCaseId(null);
+      setDragOverStatus(null);
+    }
+  };
+
+  const handleCaseDrop = async (
+    event: React.DragEvent<HTMLDivElement>,
+    status: CaseStatus
+  ) => {
+    event.preventDefault();
+    const caseId =
+      event.dataTransfer.getData('application/x-psyzygy-case')
+      || event.dataTransfer.getData('text/plain');
+    const caseItem = cases.find((item) => item.id === caseId);
+
+    if (caseItem) {
+      await handleBoardStatusChange(caseItem, status);
+    } else {
+      setDragOverStatus(null);
     }
   };
 
@@ -765,6 +858,180 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
         </table>
       </div>
     </Card>
+  );
+
+  const renderKanbanBoard = () => (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h3 className="font-semibold text-slate-900">Case Workflow Board</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              {canManageCases
+                ? 'Drag cards between columns to update status. Every move is recorded in the case timeline.'
+                : 'Your access is read-only. Open a card to review its case details.'}
+            </p>
+          </div>
+          <div className="relative w-full lg:max-w-sm">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search case, client, service, or associate"
+              className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+        </div>
+      </Card>
+
+      <div className="overflow-x-auto pb-4 [scrollbar-color:#94a3b8_transparent] [scrollbar-width:thin]">
+        <div className="flex min-h-[600px] w-max items-start gap-4">
+          {CASE_STATUSES.map((status) => {
+            const statusCases = filteredCases.filter(
+              (caseItem) => caseItem.status === status
+            );
+            const isDropTarget = dragOverStatus === status;
+
+            return (
+              <div
+                key={status}
+                className={`w-[294px] shrink-0 rounded-2xl border p-3 transition-colors ${
+                  isDropTarget
+                    ? 'border-teal-400 bg-teal-50/80'
+                    : 'border-slate-200 bg-slate-100/70'
+                }`}
+                onDragOver={(event) => {
+                  if (!canManageCases) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                  setDragOverStatus(status);
+                }}
+                onDrop={(event) => handleCaseDrop(event, status)}
+              >
+                <div className="mb-3 flex items-center justify-between px-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${CASE_STATUS_ACCENTS[status]}`}
+                    />
+                    <h4 className="truncate text-sm font-semibold text-slate-800">
+                      {status}
+                    </h4>
+                  </div>
+                  <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-500 shadow-sm">
+                    {statusCases.length}
+                  </span>
+                </div>
+
+                <div className="space-y-3">
+                  {statusCases.map((caseItem) => {
+                    const openTaskCount = tasks.filter(
+                      (task) => task.case_id === caseItem.id && isOpenTask(task)
+                    ).length;
+                    const isMoving = movingCaseId === caseItem.id;
+
+                    return (
+                      <article
+                        key={caseItem.id}
+                        draggable={canManageCases && !isMoving}
+                        onDragStart={(event) => {
+                          event.dataTransfer.effectAllowed = 'move';
+                          event.dataTransfer.setData(
+                            'application/x-psyzygy-case',
+                            caseItem.id
+                          );
+                          event.dataTransfer.setData('text/plain', caseItem.id);
+                          setMovingCaseId(caseItem.id);
+                        }}
+                        onDragEnd={() => {
+                          setMovingCaseId(null);
+                          setDragOverStatus(null);
+                        }}
+                        onClick={() => loadCaseDetails(caseItem)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            loadCaseDetails(caseItem);
+                          }
+                        }}
+                        role="button"
+                        tabIndex={0}
+                        className={`group rounded-xl border bg-white p-3.5 shadow-sm transition-all hover:-translate-y-0.5 hover:border-teal-200 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-teal-500 ${
+                          canManageCases ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+                        } ${isMoving ? 'opacity-50' : 'opacity-100'}`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
+                              {caseItem.case_number}
+                            </p>
+                            <h5 className="mt-1 truncate font-semibold text-slate-900">
+                              {caseItem.client_name || 'Client'}
+                            </h5>
+                          </div>
+                          {canManageCases && (
+                            <GripVertical className="h-4 w-4 shrink-0 text-slate-300 group-hover:text-slate-500" />
+                          )}
+                        </div>
+
+                        <p className="mt-2 line-clamp-2 text-sm text-slate-600">
+                          {caseItem.service_name
+                            || caseItem.presenting_concern
+                            || caseItem.case_type}
+                        </p>
+
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium ${CASE_PRIORITY_STYLES[caseItem.priority]}`}
+                          >
+                            <Flag className="h-3 w-3" />
+                            {caseItem.priority}
+                          </span>
+                          {isOverdue(caseItem) && (
+                            <span className="rounded-full bg-rose-50 px-2 py-1 text-[11px] font-medium text-rose-700">
+                              Overdue
+                            </span>
+                          )}
+                          {openTaskCount > 0 && (
+                            <span className="rounded-full bg-violet-50 px-2 py-1 text-[11px] font-medium text-violet-700">
+                              {openTaskCount} task{openTaskCount === 1 ? '' : 's'}
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-3 text-xs text-slate-500">
+                          <p className="flex items-center gap-1.5">
+                            <UserRound className="h-3.5 w-3.5" />
+                            <span className="truncate">
+                              {caseItem.associate_name || 'Unassigned'}
+                            </span>
+                          </p>
+                          <p className="flex items-center gap-1.5">
+                            <CalendarDays className="h-3.5 w-3.5" />
+                            Target {formatDate(caseItem.target_release_date)}
+                          </p>
+                        </div>
+                      </article>
+                    );
+                  })}
+
+                  {statusCases.length === 0 && (
+                    <div
+                      className={`rounded-xl border border-dashed px-4 py-8 text-center text-xs ${
+                        isDropTarget
+                          ? 'border-teal-300 bg-white/70 text-teal-700'
+                          : 'border-slate-300 text-slate-400'
+                      }`}
+                    >
+                      {canManageCases ? 'Drop a case here' : 'No cases'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 
   const renderDashboard = () => (
@@ -1058,8 +1325,8 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
                 )}
               </div>
             </div>
-            <Button variant="outline" onClick={() => setActiveView('all')}>
-              Back to Cases
+            <Button variant="outline" onClick={() => setActiveView('board')}>
+              Back to Board
             </Button>
           </div>
 
@@ -1198,31 +1465,38 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
 
   return (
     <div className="space-y-6 pb-10">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div>
-          <h2 className="text-2xl font-semibold text-slate-900">
-            Case Management
-          </h2>
-          <p className="text-sm text-slate-500 mt-1">
-            Operational case tracking for assessment workflows.
-          </p>
-        </div>
+      <div className={`flex flex-col gap-3 xl:flex-row xl:items-center ${
+        showViewNavigation ? 'xl:justify-between' : 'xl:justify-end'
+      }`}>
+        {showViewNavigation && (
+          <div>
+            <h2 className="text-2xl font-semibold text-slate-900">
+              Case Management
+            </h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Operational case tracking for assessment workflows.
+            </p>
+          </div>
+        )}
         <Button variant="outline" onClick={loadData} disabled={loading}>
           <RefreshCw className="w-4 h-4 mr-2" />
           Refresh
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {renderViewButton('dashboard', 'Case Dashboard', FolderKanban)}
-        {renderViewButton('all', 'All Cases', ClipboardList, cases.length)}
-        {renderViewButton('mine', 'My Cases', Eye, filteredCases.length)}
-        {canManageCases && renderViewButton('create', 'Create Case', Plus)}
-        {renderViewButton('tasks', 'Case Tasks', ListChecks, tasks.filter(isOpenTask).length)}
-        {renderViewButton('overdue', 'Overdue Cases', AlertTriangle, overdueCases.length)}
-        {renderViewButton('review', 'For Review', Clock, reviewCases.length)}
-        {renderViewButton('release', 'Ready for Release', FileCheck2, releaseCases.length)}
-      </div>
+      {showViewNavigation && (
+        <div className="flex flex-wrap gap-2">
+          {renderViewButton('board', 'Case Board', FolderKanban, cases.length)}
+          {renderViewButton('dashboard', 'Case Dashboard', BarChart3)}
+          {renderViewButton('all', 'All Cases', ClipboardList, cases.length)}
+          {renderViewButton('mine', 'My Cases', Eye, filteredCases.length)}
+          {canManageCases && renderViewButton('create', 'Create Case', Plus)}
+          {renderViewButton('tasks', 'Case Tasks', ListChecks, tasks.filter(isOpenTask).length)}
+          {renderViewButton('overdue', 'Overdue Cases', AlertTriangle, overdueCases.length)}
+          {renderViewButton('review', 'For Review', Clock, reviewCases.length)}
+          {renderViewButton('release', 'Ready for Release', FileCheck2, releaseCases.length)}
+        </div>
+      )}
 
       {error && (
         <Card className="p-4 border border-red-200 bg-red-50">
@@ -1234,6 +1508,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({ currentUser }) =
         <Card className="p-8 text-center text-slate-500">Loading cases...</Card>
       ) : (
         <>
+          {activeView === 'board' && renderKanbanBoard()}
           {activeView === 'dashboard' && renderDashboard()}
           {activeView === 'all' && renderCaseListView(filteredCases, 'All Cases')}
           {activeView === 'mine' && renderCaseListView(filteredCases, 'My Cases')}

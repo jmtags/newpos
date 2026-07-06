@@ -7,7 +7,6 @@ import {
   CalendarDays,
   ClipboardList,
   DoorOpen,
-  FolderKanban,
   LayoutDashboard,
   LogOut,
   Plus,
@@ -50,7 +49,6 @@ interface NavigationGroup {
 const menuItems: NavigationItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'aiAssistant', label: 'AI Assistant', icon: Bot },
-  { id: 'cases', label: 'Case Management', icon: FolderKanban },
   { id: 'pos', label: 'New Transaction', icon: ShoppingCart },
   { id: 'clients', label: 'Clients', icon: Users },
   { id: 'transactions', label: 'Transactions', icon: Receipt },
@@ -81,7 +79,7 @@ const financeItems: NavigationItem[] = [
 const groupDefinitions = [
   {
     label: 'Workspace',
-    ids: ['dashboard', 'aiAssistant', 'cases', 'clients']
+    ids: ['dashboard', 'aiAssistant', 'clients']
   },
   {
     label: 'Operations',
@@ -100,7 +98,6 @@ const groupDefinitions = [
 const iconTileClasses: Record<string, string> = {
   dashboard: 'bg-teal-100 text-teal-700',
   aiAssistant: 'bg-violet-100 text-violet-700',
-  cases: 'bg-indigo-100 text-indigo-700',
   clients: 'bg-orange-100 text-orange-700',
   transactions: 'bg-emerald-100 text-emerald-700',
   services: 'bg-sky-100 text-sky-700',

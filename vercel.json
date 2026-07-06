@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/casemanagement",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/casemanagement/:path*",
+      "destination": "/index.html"
+    }
+  ]
+}
