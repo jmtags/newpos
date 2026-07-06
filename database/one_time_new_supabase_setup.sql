@@ -8,12 +8,8 @@
 -- After running this script, deploy the Edge Function separately:
 --   supabase functions deploy ai-clinic-assistant
 --
--- Case Management currently requires these additional scripts, in order:
---   database/8_add_case_management_module.sql
---   database/9_add_case_management_backend_api.sql
---   database/10_add_case_role_access.sql
---   database/11_add_case_ui_support.sql
---   database/12_connect_cases_to_pos_transactions.sql
+-- The complete Case Management database installer is included at the end of
+-- this file. No additional Case Management SQL files are required.
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -1736,3 +1732,2696 @@ alter default privileges in schema public
 grant select, insert, update, delete on tables to authenticated;
 alter default privileges in schema public
 grant usage, select on sequences to authenticated;
+
+-- ============================================================================
+-- BEGIN INCLUDED CASE MANAGEMENT INSTALLER
+-- Sources: database/8 through database/12, preserved in execution order.
+-- ============================================================================
+
+-- ============================================================================
+-- INCLUDED SOURCE: database/8_add_case_management_module.sql
+-- ============================================================================
+-- Case Management module database structure.
+-- Run after the base POS, scheduling, and user-management schema is in place.
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+alter table public.mental_health_associates
+  add column if not exists user_id uuid references public.users(id) on delete set null;
+
+create unique index if not exists mental_health_associates_user_id_unique_idx
+  on public.mental_health_associates (user_id)
+  where user_id is not null;
+
+create index if not exists mental_health_associates_user_id_idx
+  on public.mental_health_associates (user_id);
+
+create table if not exists public.cases (
+  id uuid primary key default gen_random_uuid(),
+  case_number text not null unique,
+  client_id uuid not null references public.clients(id),
+  service_id uuid references public.services(id),
+  transaction_id uuid references public.transactions(id),
+  transaction_item_id uuid references public.transaction_items(id),
+  appointment_id uuid references public.appointments(id),
+  associate_id uuid references public.mental_health_associates(id),
+  case_type text not null default 'Assessment',
+  status text not null default 'New'
+    check (
+      status in (
+        'New',
+        'Scheduled',
+        'Testing Ongoing',
+        'Testing Completed',
+        'Scoring',
+        'Interpretation',
+        'Report Writing',
+        'For Review',
+        'For Revision',
+        'Ready for Release',
+        'Released',
+        'Closed',
+        'Cancelled'
+      )
+    ),
+  priority text not null default 'Normal'
+    check (priority in ('Low', 'Normal', 'High', 'Urgent')),
+  presenting_concern text,
+  internal_notes text,
+  report_due_date date,
+  released_at timestamptz,
+  closed_at timestamptz,
+  created_by_user_id uuid references public.users(id),
+  updated_by_user_id uuid references public.users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists cases_client_idx
+  on public.cases (client_id);
+
+create index if not exists cases_service_idx
+  on public.cases (service_id);
+
+create index if not exists cases_transaction_idx
+  on public.cases (transaction_id);
+
+create index if not exists cases_transaction_item_idx
+  on public.cases (transaction_item_id);
+
+create index if not exists cases_appointment_idx
+  on public.cases (appointment_id);
+
+create index if not exists cases_associate_idx
+  on public.cases (associate_id);
+
+create index if not exists cases_status_idx
+  on public.cases (status);
+
+create index if not exists cases_report_due_date_idx
+  on public.cases (report_due_date);
+
+create or replace function public.set_case_number()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.case_number is null or length(trim(new.case_number)) = 0 then
+    new.case_number :=
+      'CASE-' || to_char(now() at time zone 'Asia/Manila', 'YYYYMMDD') ||
+      '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_cases_set_case_number on public.cases;
+create trigger trg_cases_set_case_number
+before insert on public.cases
+for each row execute function public.set_case_number();
+
+drop trigger if exists trg_cases_set_updated_at on public.cases;
+create trigger trg_cases_set_updated_at
+before update on public.cases
+for each row execute function public.set_updated_at();
+
+create table if not exists public.case_progress_logs (
+  id uuid primary key default gen_random_uuid(),
+  case_id uuid not null references public.cases(id) on delete cascade,
+  from_status text
+    check (
+      from_status is null or from_status in (
+        'New',
+        'Scheduled',
+        'Testing Ongoing',
+        'Testing Completed',
+        'Scoring',
+        'Interpretation',
+        'Report Writing',
+        'For Review',
+        'For Revision',
+        'Ready for Release',
+        'Released',
+        'Closed',
+        'Cancelled'
+      )
+    ),
+  to_status text not null
+    check (
+      to_status in (
+        'New',
+        'Scheduled',
+        'Testing Ongoing',
+        'Testing Completed',
+        'Scoring',
+        'Interpretation',
+        'Report Writing',
+        'For Review',
+        'For Revision',
+        'Ready for Release',
+        'Released',
+        'Closed',
+        'Cancelled'
+      )
+    ),
+  notes text,
+  changed_by_user_id uuid references public.users(id),
+  changed_by_associate_id uuid references public.mental_health_associates(id),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists case_progress_logs_case_created_idx
+  on public.case_progress_logs (case_id, created_at desc);
+
+create index if not exists case_progress_logs_to_status_idx
+  on public.case_progress_logs (to_status);
+
+create table if not exists public.case_tasks (
+  id uuid primary key default gen_random_uuid(),
+  case_id uuid not null references public.cases(id) on delete cascade,
+  title text not null,
+  description text,
+  status text not null default 'Pending'
+    check (status in ('Pending', 'In Progress', 'Completed', 'Cancelled')),
+  assigned_to_user_id uuid references public.users(id),
+  assigned_to_associate_id uuid references public.mental_health_associates(id),
+  due_date date,
+  completed_at timestamptz,
+  created_by_user_id uuid references public.users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists case_tasks_case_idx
+  on public.case_tasks (case_id);
+
+create index if not exists case_tasks_status_idx
+  on public.case_tasks (status);
+
+create index if not exists case_tasks_assigned_user_idx
+  on public.case_tasks (assigned_to_user_id);
+
+create index if not exists case_tasks_assigned_associate_idx
+  on public.case_tasks (assigned_to_associate_id);
+
+create index if not exists case_tasks_due_date_idx
+  on public.case_tasks (due_date);
+
+drop trigger if exists trg_case_tasks_set_updated_at on public.case_tasks;
+create trigger trg_case_tasks_set_updated_at
+before update on public.case_tasks
+for each row execute function public.set_updated_at();
+
+alter table public.cases enable row level security;
+alter table public.case_progress_logs enable row level security;
+alter table public.case_tasks enable row level security;
+
+drop policy if exists cases_select_scheduling_users on public.cases;
+drop policy if exists cases_insert_scheduling_users on public.cases;
+drop policy if exists cases_update_scheduling_users on public.cases;
+drop policy if exists cases_delete_admin_users on public.cases;
+
+create policy cases_select_scheduling_users
+on public.cases
+for select
+to authenticated
+using (public.is_scheduling_user(auth.uid()));
+
+create policy cases_insert_scheduling_users
+on public.cases
+for insert
+to authenticated
+with check (public.is_scheduling_user(auth.uid()));
+
+create policy cases_update_scheduling_users
+on public.cases
+for update
+to authenticated
+using (public.is_scheduling_user(auth.uid()))
+with check (public.is_scheduling_user(auth.uid()));
+
+create policy cases_delete_admin_users
+on public.cases
+for delete
+to authenticated
+using (public.is_admin_user(auth.uid()));
+
+drop policy if exists case_progress_logs_select_scheduling_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_insert_scheduling_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_update_scheduling_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_delete_admin_users on public.case_progress_logs;
+
+create policy case_progress_logs_select_scheduling_users
+on public.case_progress_logs
+for select
+to authenticated
+using (public.is_scheduling_user(auth.uid()));
+
+create policy case_progress_logs_insert_scheduling_users
+on public.case_progress_logs
+for insert
+to authenticated
+with check (public.is_scheduling_user(auth.uid()));
+
+create policy case_progress_logs_update_scheduling_users
+on public.case_progress_logs
+for update
+to authenticated
+using (public.is_scheduling_user(auth.uid()))
+with check (public.is_scheduling_user(auth.uid()));
+
+create policy case_progress_logs_delete_admin_users
+on public.case_progress_logs
+for delete
+to authenticated
+using (public.is_admin_user(auth.uid()));
+
+drop policy if exists case_tasks_select_scheduling_users on public.case_tasks;
+drop policy if exists case_tasks_insert_scheduling_users on public.case_tasks;
+drop policy if exists case_tasks_update_scheduling_users on public.case_tasks;
+drop policy if exists case_tasks_delete_admin_users on public.case_tasks;
+
+create policy case_tasks_select_scheduling_users
+on public.case_tasks
+for select
+to authenticated
+using (public.is_scheduling_user(auth.uid()));
+
+create policy case_tasks_insert_scheduling_users
+on public.case_tasks
+for insert
+to authenticated
+with check (public.is_scheduling_user(auth.uid()));
+
+create policy case_tasks_update_scheduling_users
+on public.case_tasks
+for update
+to authenticated
+using (public.is_scheduling_user(auth.uid()))
+with check (public.is_scheduling_user(auth.uid()));
+
+create policy case_tasks_delete_admin_users
+on public.case_tasks
+for delete
+to authenticated
+using (public.is_admin_user(auth.uid()));
+
+-- ============================================================================
+-- INCLUDED SOURCE: database/9_add_case_management_backend_api.sql
+-- ============================================================================
+-- Backend/API support for Case Management.
+-- Run after database/8_add_case_management_module.sql.
+
+alter table public.cases
+  add column if not exists target_release_date date;
+
+create index if not exists cases_target_release_date_idx
+  on public.cases (target_release_date);
+
+create or replace function public.case_status_values()
+returns text[]
+language sql
+immutable
+as $$
+  select array[
+    'New',
+    'Scheduled',
+    'Testing Ongoing',
+    'Testing Completed',
+    'Scoring',
+    'Interpretation',
+    'Report Writing',
+    'For Review',
+    'For Revision',
+    'Ready for Release',
+    'Released',
+    'Closed',
+    'Cancelled'
+  ]::text[];
+$$;
+
+create or replace function public.case_task_status_values()
+returns text[]
+language sql
+immutable
+as $$
+  select array['Pending', 'In Progress', 'Completed', 'Cancelled']::text[];
+$$;
+
+create or replace function public.case_is_valid_status(status_value text)
+returns boolean
+language sql
+immutable
+as $$
+  select status_value = any(public.case_status_values());
+$$;
+
+create or replace function public.case_is_valid_task_status(status_value text)
+returns boolean
+language sql
+immutable
+as $$
+  select status_value = any(public.case_task_status_values());
+$$;
+
+create or replace function public.case_current_user_id()
+returns uuid
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select id
+  from public.users
+  where auth_user_id = auth.uid()
+    and is_active = true
+  limit 1;
+$$;
+
+create or replace function public.case_current_associate_id()
+returns uuid
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select mha.id
+  from public.mental_health_associates mha
+  join public.users u on u.id = mha.user_id
+  where u.auth_user_id = auth.uid()
+    and u.is_active = true
+    and mha.is_active = true
+  limit 1;
+$$;
+
+create or replace function public.case_is_privileged_user()
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.users
+    where auth_user_id = auth.uid()
+      and role in ('admin', 'manager')
+      and is_active = true
+  );
+$$;
+
+create or replace function public.case_can_access_associate(associate_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select
+    public.case_is_privileged_user()
+    or public.case_current_associate_id() is null
+    or (
+      associate_id is not null
+      and associate_id = public.case_current_associate_id()
+    );
+$$;
+
+create or replace function public.case_to_json(case_row public.cases)
+returns jsonb
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select jsonb_build_object(
+    'id', case_row.id,
+    'case_number', case_row.case_number,
+    'client_id', case_row.client_id,
+    'client_name', (select full_name from public.clients where id = case_row.client_id),
+    'service_id', case_row.service_id,
+    'service_name', (select name from public.services where id = case_row.service_id),
+    'transaction_id', case_row.transaction_id,
+    'transaction_item_id', case_row.transaction_item_id,
+    'appointment_id', case_row.appointment_id,
+    'associate_id', case_row.associate_id,
+    'associate_name', (
+      select full_name
+      from public.mental_health_associates
+      where id = case_row.associate_id
+    ),
+    'case_type', case_row.case_type,
+    'status', case_row.status,
+    'priority', case_row.priority,
+    'presenting_concern', case_row.presenting_concern,
+    'internal_notes', case_row.internal_notes,
+    'report_due_date', case_row.report_due_date,
+    'target_release_date', case_row.target_release_date,
+    'released_at', case_row.released_at,
+    'closed_at', case_row.closed_at,
+    'created_by_user_id', case_row.created_by_user_id,
+    'updated_by_user_id', case_row.updated_by_user_id,
+    'created_at', case_row.created_at,
+    'updated_at', case_row.updated_at
+  );
+$$;
+
+create or replace function public.case_task_to_json(task_row public.case_tasks)
+returns jsonb
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select jsonb_build_object(
+    'id', task_row.id,
+    'case_id', task_row.case_id,
+    'title', task_row.title,
+    'description', task_row.description,
+    'status', task_row.status,
+    'assigned_to_user_id', task_row.assigned_to_user_id,
+    'assigned_to_associate_id', task_row.assigned_to_associate_id,
+    'assigned_to_associate_name', (
+      select full_name
+      from public.mental_health_associates
+      where id = task_row.assigned_to_associate_id
+    ),
+    'due_date', task_row.due_date,
+    'completed_at', task_row.completed_at,
+    'created_by_user_id', task_row.created_by_user_id,
+    'created_at', task_row.created_at,
+    'updated_at', task_row.updated_at
+  );
+$$;
+
+create or replace function public.case_status_change_logger()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if old.status is distinct from new.status then
+    insert into public.case_progress_logs (
+      case_id,
+      from_status,
+      to_status,
+      notes,
+      changed_by_user_id,
+      changed_by_associate_id
+    )
+    values (
+      new.id,
+      old.status,
+      new.status,
+      null,
+      new.updated_by_user_id,
+      public.case_current_associate_id()
+    );
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_cases_log_status_change on public.cases;
+create trigger trg_cases_log_status_change
+after update of status on public.cases
+for each row
+execute function public.case_status_change_logger();
+
+create or replace function public.case_create_manual(payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  new_case public.cases;
+  requested_status text := coalesce(nullif(payload->>'status', ''), 'New');
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to create cases.');
+  end if;
+
+  if not public.case_is_valid_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || requested_status);
+  end if;
+
+  if payload->>'client_id' is null or payload->>'client_id' = '' then
+    return jsonb_build_object('success', false, 'message', 'Client is required to create a case.');
+  end if;
+
+  insert into public.cases (
+    case_number,
+    client_id,
+    service_id,
+    transaction_id,
+    transaction_item_id,
+    appointment_id,
+    associate_id,
+    case_type,
+    status,
+    priority,
+    presenting_concern,
+    internal_notes,
+    report_due_date,
+    target_release_date,
+    created_by_user_id,
+    updated_by_user_id
+  )
+  values (
+    nullif(payload->>'case_number', ''),
+    (payload->>'client_id')::uuid,
+    nullif(payload->>'service_id', '')::uuid,
+    nullif(payload->>'transaction_id', '')::uuid,
+    nullif(payload->>'transaction_item_id', '')::uuid,
+    nullif(payload->>'appointment_id', '')::uuid,
+    nullif(payload->>'associate_id', '')::uuid,
+    coalesce(nullif(payload->>'case_type', ''), 'Assessment'),
+    requested_status,
+    coalesce(nullif(payload->>'priority', ''), 'Normal'),
+    nullif(payload->>'presenting_concern', ''),
+    nullif(payload->>'internal_notes', ''),
+    nullif(payload->>'report_due_date', '')::date,
+    coalesce(
+      nullif(payload->>'target_release_date', '')::date,
+      nullif(payload->>'report_due_date', '')::date
+    ),
+    current_user_id,
+    current_user_id
+  )
+  returning * into new_case;
+
+  insert into public.case_progress_logs (
+    case_id,
+    from_status,
+    to_status,
+    notes,
+    changed_by_user_id,
+    changed_by_associate_id
+  )
+  values (
+    new_case.id,
+    null,
+    new_case.status,
+    'Case created',
+    current_user_id,
+    public.case_current_associate_id()
+  );
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case created successfully.',
+    'data', public.case_to_json(new_case)
+  );
+exception
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more linked records do not exist.');
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more IDs are invalid.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_create_from_transaction_item(
+  target_transaction_item_id uuid,
+  payload jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  source_item record;
+  linked_appointment_id uuid;
+  new_case public.cases;
+  requested_status text := coalesce(nullif(payload->>'status', ''), 'New');
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to create cases.');
+  end if;
+
+  if not public.case_is_valid_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || requested_status);
+  end if;
+
+  select
+    ti.id as transaction_item_id,
+    ti.transaction_id,
+    ti.service_id,
+    ti.associate_id,
+    t.client_id
+  into source_item
+  from public.transaction_items ti
+  join public.transactions t on t.id = ti.transaction_id
+  where ti.id = target_transaction_item_id;
+
+  if source_item.transaction_item_id is null then
+    return jsonb_build_object('success', false, 'message', 'Transaction item was not found.');
+  end if;
+
+  select id
+  into linked_appointment_id
+  from public.appointments
+  where transaction_item_id = target_transaction_item_id
+  order by created_at desc
+  limit 1;
+
+  insert into public.cases (
+    case_number,
+    client_id,
+    service_id,
+    transaction_id,
+    transaction_item_id,
+    appointment_id,
+    associate_id,
+    case_type,
+    status,
+    priority,
+    presenting_concern,
+    internal_notes,
+    report_due_date,
+    target_release_date,
+    created_by_user_id,
+    updated_by_user_id
+  )
+  values (
+    nullif(payload->>'case_number', ''),
+    source_item.client_id,
+    coalesce(nullif(payload->>'service_id', '')::uuid, source_item.service_id),
+    source_item.transaction_id,
+    source_item.transaction_item_id,
+    coalesce(nullif(payload->>'appointment_id', '')::uuid, linked_appointment_id),
+    coalesce(nullif(payload->>'associate_id', '')::uuid, source_item.associate_id),
+    coalesce(nullif(payload->>'case_type', ''), 'Assessment'),
+    requested_status,
+    coalesce(nullif(payload->>'priority', ''), 'Normal'),
+    nullif(payload->>'presenting_concern', ''),
+    nullif(payload->>'internal_notes', ''),
+    nullif(payload->>'report_due_date', '')::date,
+    coalesce(
+      nullif(payload->>'target_release_date', '')::date,
+      nullif(payload->>'report_due_date', '')::date
+    ),
+    current_user_id,
+    current_user_id
+  )
+  returning * into new_case;
+
+  insert into public.case_progress_logs (
+    case_id,
+    from_status,
+    to_status,
+    notes,
+    changed_by_user_id,
+    changed_by_associate_id
+  )
+  values (
+    new_case.id,
+    null,
+    new_case.status,
+    'Case created from transaction item',
+    current_user_id,
+    public.case_current_associate_id()
+  );
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case created from transaction item successfully.',
+    'data', public.case_to_json(new_case)
+  );
+exception
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more linked records do not exist.');
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more IDs are invalid.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_list_all()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_by_client(target_client_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Client cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where c.client_id = target_client_id
+        and public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_by_associate(target_associate_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  if not public.case_can_access_associate(target_associate_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases assigned to this associate.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Associate cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where c.associate_id = target_associate_id
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_by_status(target_status text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  if not public.case_is_valid_status(target_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || coalesce(target_status, ''));
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Cases loaded by status successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where c.status = target_status
+        and public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_overdue(target_date date default ((now() at time zone 'Asia/Manila')::date))
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Overdue cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.target_release_date asc, c.created_at desc)
+      from public.cases c
+      where c.target_release_date is not null
+        and c.target_release_date < target_date
+        and c.status not in ('Released', 'Closed', 'Cancelled')
+        and public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_update_status(
+  target_case_id uuid,
+  new_status text,
+  status_notes text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  previous_case public.cases;
+  updated_case public.cases;
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to update cases.');
+  end if;
+
+  if not public.case_is_valid_status(new_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || coalesce(new_status, ''));
+  end if;
+
+  select *
+  into previous_case
+  from public.cases
+  where id = target_case_id;
+
+  if previous_case.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case was not found.');
+  end if;
+
+  if not public.case_can_access_associate(previous_case.associate_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to update this case.');
+  end if;
+
+  update public.cases
+  set
+    status = new_status,
+    updated_by_user_id = current_user_id,
+    released_at = case when new_status = 'Released' then coalesce(released_at, now()) else released_at end,
+    closed_at = case when new_status in ('Closed', 'Cancelled') then coalesce(closed_at, now()) else closed_at end
+  where id = target_case_id
+  returning * into updated_case;
+
+  if previous_case.status is distinct from new_status and nullif(status_notes, '') is not null then
+    update public.case_progress_logs
+    set notes = status_notes
+    where id = (
+      select id
+      from public.case_progress_logs
+      where case_id = target_case_id
+        and from_status = previous_case.status
+        and to_status = new_status
+      order by created_at desc
+      limit 1
+    );
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case status updated successfully.',
+    'data', public.case_to_json(updated_case)
+  );
+exception
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_task_create(payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  parent_case public.cases;
+  new_task public.case_tasks;
+  requested_status text := coalesce(nullif(payload->>'status', ''), 'Pending');
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to create case tasks.');
+  end if;
+
+  if payload->>'case_id' is null or payload->>'case_id' = '' then
+    return jsonb_build_object('success', false, 'message', 'Case is required to create a task.');
+  end if;
+
+  if not public.case_is_valid_task_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid task status: ' || requested_status);
+  end if;
+
+  if payload->>'title' is null or length(trim(payload->>'title')) = 0 then
+    return jsonb_build_object('success', false, 'message', 'Task title is required.');
+  end if;
+
+  select *
+  into parent_case
+  from public.cases
+  where id = (payload->>'case_id')::uuid;
+
+  if parent_case.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case was not found.');
+  end if;
+
+  if not public.case_can_access_associate(parent_case.associate_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to create tasks for this case.');
+  end if;
+
+  insert into public.case_tasks (
+    case_id,
+    title,
+    description,
+    status,
+    assigned_to_user_id,
+    assigned_to_associate_id,
+    due_date,
+    completed_at,
+    created_by_user_id
+  )
+  values (
+    parent_case.id,
+    trim(payload->>'title'),
+    nullif(payload->>'description', ''),
+    requested_status,
+    nullif(payload->>'assigned_to_user_id', '')::uuid,
+    nullif(payload->>'assigned_to_associate_id', '')::uuid,
+    nullif(payload->>'due_date', '')::date,
+    case when requested_status = 'Completed' then now() else null end,
+    current_user_id
+  )
+  returning * into new_task;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case task created successfully.',
+    'data', public.case_task_to_json(new_task)
+  );
+exception
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be created because one or more IDs are invalid.');
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be created because one or more linked records do not exist.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_task_update(
+  target_task_id uuid,
+  payload jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  existing_task public.case_tasks;
+  parent_case public.cases;
+  updated_task public.case_tasks;
+  requested_status text;
+begin
+  if not public.is_scheduling_user(auth.uid()) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to update case tasks.');
+  end if;
+
+  select *
+  into existing_task
+  from public.case_tasks
+  where id = target_task_id;
+
+  if existing_task.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case task was not found.');
+  end if;
+
+  select *
+  into parent_case
+  from public.cases
+  where id = existing_task.case_id;
+
+  if not public.case_can_access_associate(parent_case.associate_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to update this case task.');
+  end if;
+
+  requested_status := coalesce(nullif(payload->>'status', ''), existing_task.status);
+
+  if not public.case_is_valid_task_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid task status: ' || requested_status);
+  end if;
+
+  update public.case_tasks
+  set
+    title = coalesce(nullif(payload->>'title', ''), title),
+    description = case
+      when payload ? 'description' then nullif(payload->>'description', '')
+      else description
+    end,
+    status = requested_status,
+    assigned_to_user_id = case
+      when payload ? 'assigned_to_user_id' then nullif(payload->>'assigned_to_user_id', '')::uuid
+      else assigned_to_user_id
+    end,
+    assigned_to_associate_id = case
+      when payload ? 'assigned_to_associate_id' then nullif(payload->>'assigned_to_associate_id', '')::uuid
+      else assigned_to_associate_id
+    end,
+    due_date = case
+      when payload ? 'due_date' then nullif(payload->>'due_date', '')::date
+      else due_date
+    end,
+    completed_at = case
+      when requested_status = 'Completed' then coalesce(completed_at, now())
+      when existing_task.status = 'Completed' and requested_status <> 'Completed' then null
+      else completed_at
+    end
+  where id = target_task_id
+  returning * into updated_task;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case task updated successfully.',
+    'data', public.case_task_to_json(updated_task)
+  );
+exception
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be updated because one or more IDs are invalid.');
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be updated because one or more linked records do not exist.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_task_complete(target_task_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  return public.case_task_update(target_task_id, '{"status":"Completed"}'::jsonb);
+end;
+$$;
+
+grant execute on function public.case_create_manual(jsonb) to authenticated;
+grant execute on function public.case_create_from_transaction_item(uuid, jsonb) to authenticated;
+grant execute on function public.case_list_all() to authenticated;
+grant execute on function public.case_list_by_client(uuid) to authenticated;
+grant execute on function public.case_list_by_associate(uuid) to authenticated;
+grant execute on function public.case_list_by_status(text) to authenticated;
+grant execute on function public.case_list_overdue(date) to authenticated;
+grant execute on function public.case_update_status(uuid, text, text) to authenticated;
+grant execute on function public.case_task_create(jsonb) to authenticated;
+grant execute on function public.case_task_update(uuid, jsonb) to authenticated;
+grant execute on function public.case_task_complete(uuid) to authenticated;
+
+-- ============================================================================
+-- INCLUDED SOURCE: database/10_add_case_role_access.sql
+-- ============================================================================
+-- Role-based access control for Case Management.
+-- Run after database/9_add_case_management_backend_api.sql.
+
+alter table public.users
+  drop constraint if exists users_role_check;
+
+alter table public.users
+  add constraint users_role_check
+  check (
+    role in (
+      'admin',
+      'manager',
+      'case_staff',
+      'associate_user',
+      'case_viewer',
+      'regular_user'
+    )
+  ) not valid;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from public.users
+    where role not in (
+      'admin',
+      'manager',
+      'case_staff',
+      'associate_user',
+      'case_viewer',
+      'regular_user'
+    )
+  ) then
+    alter table public.users
+      validate constraint users_role_check;
+  else
+    raise notice
+      'Legacy user roles were preserved. Review unsupported roles in public.users.';
+  end if;
+end;
+$$;
+
+create or replace function public.case_role_values()
+returns text[]
+language sql
+immutable
+as $$
+  select array[
+    'admin',
+    'manager',
+    'case_staff',
+    'associate_user',
+    'case_viewer',
+    'regular_user'
+  ]::text[];
+$$;
+
+create or replace function public.case_current_role()
+returns text
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select role
+  from public.users
+  where auth_user_id = auth.uid()
+    and is_active = true
+  limit 1;
+$$;
+
+create or replace function public.case_can_use_module()
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select coalesce(public.case_current_role(), '') in (
+    'admin',
+    'manager',
+    'case_staff',
+    'associate_user',
+    'case_viewer'
+  );
+$$;
+
+create or replace function public.case_can_manage_cases()
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select coalesce(public.case_current_role(), '') in (
+    'admin',
+    'manager',
+    'case_staff'
+  );
+$$;
+
+create or replace function public.case_is_privileged_user()
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select coalesce(public.case_current_role(), '') in ('admin', 'manager');
+$$;
+
+create or replace function public.case_can_access_associate(associate_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select
+    coalesce(public.case_current_role(), '') in (
+      'admin',
+      'manager',
+      'case_staff',
+      'case_viewer'
+    )
+    or (
+      coalesce(public.case_current_role(), '') = 'associate_user'
+      and associate_id is not null
+      and associate_id = public.case_current_associate_id()
+    );
+$$;
+
+create or replace function public.case_can_add_progress(target_case_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.cases c
+    where c.id = target_case_id
+      and (
+        public.case_can_manage_cases()
+        or (
+          coalesce(public.case_current_role(), '') = 'associate_user'
+          and c.associate_id = public.case_current_associate_id()
+        )
+      )
+  );
+$$;
+
+create or replace function public.case_can_update_task(target_task_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select exists (
+    select 1
+    from public.case_tasks t
+    join public.cases c on c.id = t.case_id
+    where t.id = target_task_id
+      and (
+        public.case_can_manage_cases()
+        or (
+          coalesce(public.case_current_role(), '') = 'associate_user'
+          and (
+            t.assigned_to_associate_id = public.case_current_associate_id()
+            or c.associate_id = public.case_current_associate_id()
+          )
+        )
+      )
+  );
+$$;
+
+create or replace function public.admin_create_user(
+  new_full_name text,
+  new_email text,
+  new_role text,
+  new_is_active boolean default true
+)
+returns public.users
+language plpgsql
+security definer
+set search_path = public, auth
+set row_security = off
+as $$
+declare
+  new_auth_user_id uuid;
+  created_user public.users;
+begin
+  if not public.is_admin_user(auth.uid()) then
+    raise exception 'Only admins can create users.';
+  end if;
+
+  if new_role <> all(public.case_role_values()) then
+    raise exception 'Invalid user role: %', new_role;
+  end if;
+
+  select id
+  into new_auth_user_id
+  from auth.users
+  where lower(email) = lower(new_email);
+
+  if new_auth_user_id is null then
+    new_auth_user_id := gen_random_uuid();
+
+    insert into auth.users (
+      id,
+      instance_id,
+      aud,
+      role,
+      email,
+      encrypted_password,
+      email_confirmed_at,
+      raw_app_meta_data,
+      raw_user_meta_data,
+      created_at,
+      updated_at,
+      confirmation_token,
+      recovery_token,
+      email_change,
+      email_change_token_new,
+      is_super_admin,
+      phone,
+      phone_change,
+      phone_change_token,
+      email_change_token_current
+    )
+    values (
+      new_auth_user_id,
+      '00000000-0000-0000-0000-000000000000',
+      'authenticated',
+      'authenticated',
+      lower(new_email),
+      extensions.crypt(gen_random_uuid()::text || random()::text, extensions.gen_salt('bf')),
+      now(),
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      jsonb_build_object('full_name', new_full_name),
+      now(),
+      now(),
+      '',
+      '',
+      '',
+      '',
+      false,
+      null,
+      '',
+      '',
+      ''
+    );
+
+    insert into auth.identities (
+      id,
+      provider_id,
+      user_id,
+      identity_data,
+      provider,
+      last_sign_in_at,
+      created_at,
+      updated_at
+    )
+    values (
+      gen_random_uuid(),
+      new_auth_user_id::text,
+      new_auth_user_id,
+      jsonb_build_object('sub', new_auth_user_id::text, 'email', lower(new_email)),
+      'email',
+      now(),
+      now(),
+      now()
+    );
+  end if;
+
+  insert into public.users (auth_user_id, full_name, email, role, is_active)
+  values (new_auth_user_id, new_full_name, lower(new_email), new_role, new_is_active)
+  on conflict (email) do update
+  set
+    auth_user_id = excluded.auth_user_id,
+    full_name = excluded.full_name,
+    role = excluded.role,
+    is_active = excluded.is_active,
+    updated_at = now()
+  returning * into created_user;
+
+  return created_user;
+end;
+$$;
+
+revoke all on function public.admin_create_user(text, text, text, boolean) from public;
+grant execute on function public.admin_create_user(text, text, text, boolean) to authenticated;
+
+create or replace function public.case_create_manual(payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  new_case public.cases;
+  requested_status text := coalesce(nullif(payload->>'status', ''), 'New');
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.case_can_manage_cases() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to create cases.');
+  end if;
+
+  if not public.case_is_valid_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || requested_status);
+  end if;
+
+  if payload->>'client_id' is null or payload->>'client_id' = '' then
+    return jsonb_build_object('success', false, 'message', 'Client is required to create a case.');
+  end if;
+
+  insert into public.cases (
+    case_number,
+    client_id,
+    service_id,
+    transaction_id,
+    transaction_item_id,
+    appointment_id,
+    associate_id,
+    case_type,
+    status,
+    priority,
+    presenting_concern,
+    internal_notes,
+    report_due_date,
+    target_release_date,
+    created_by_user_id,
+    updated_by_user_id
+  )
+  values (
+    nullif(payload->>'case_number', ''),
+    (payload->>'client_id')::uuid,
+    nullif(payload->>'service_id', '')::uuid,
+    nullif(payload->>'transaction_id', '')::uuid,
+    nullif(payload->>'transaction_item_id', '')::uuid,
+    nullif(payload->>'appointment_id', '')::uuid,
+    nullif(payload->>'associate_id', '')::uuid,
+    coalesce(nullif(payload->>'case_type', ''), 'Assessment'),
+    requested_status,
+    coalesce(nullif(payload->>'priority', ''), 'Normal'),
+    nullif(payload->>'presenting_concern', ''),
+    nullif(payload->>'internal_notes', ''),
+    nullif(payload->>'report_due_date', '')::date,
+    coalesce(
+      nullif(payload->>'target_release_date', '')::date,
+      nullif(payload->>'report_due_date', '')::date
+    ),
+    current_user_id,
+    current_user_id
+  )
+  returning * into new_case;
+
+  insert into public.case_progress_logs (
+    case_id,
+    from_status,
+    to_status,
+    notes,
+    changed_by_user_id,
+    changed_by_associate_id
+  )
+  values (
+    new_case.id,
+    null,
+    new_case.status,
+    'Case created',
+    current_user_id,
+    public.case_current_associate_id()
+  );
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case created successfully.',
+    'data', public.case_to_json(new_case)
+  );
+exception
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more linked records do not exist.');
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more IDs are invalid.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_create_from_transaction_item(
+  target_transaction_item_id uuid,
+  payload jsonb default '{}'::jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  source_item record;
+  linked_appointment_id uuid;
+  new_case public.cases;
+  requested_status text := coalesce(nullif(payload->>'status', ''), 'New');
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.case_can_manage_cases() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to create cases.');
+  end if;
+
+  if not public.case_is_valid_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || requested_status);
+  end if;
+
+  select
+    ti.id as transaction_item_id,
+    ti.transaction_id,
+    ti.service_id,
+    ti.associate_id,
+    t.client_id
+  into source_item
+  from public.transaction_items ti
+  join public.transactions t on t.id = ti.transaction_id
+  where ti.id = target_transaction_item_id;
+
+  if source_item.transaction_item_id is null then
+    return jsonb_build_object('success', false, 'message', 'Transaction item was not found.');
+  end if;
+
+  select id
+  into linked_appointment_id
+  from public.appointments
+  where transaction_item_id = target_transaction_item_id
+  order by created_at desc
+  limit 1;
+
+  insert into public.cases (
+    case_number,
+    client_id,
+    service_id,
+    transaction_id,
+    transaction_item_id,
+    appointment_id,
+    associate_id,
+    case_type,
+    status,
+    priority,
+    presenting_concern,
+    internal_notes,
+    report_due_date,
+    target_release_date,
+    created_by_user_id,
+    updated_by_user_id
+  )
+  values (
+    nullif(payload->>'case_number', ''),
+    source_item.client_id,
+    coalesce(nullif(payload->>'service_id', '')::uuid, source_item.service_id),
+    source_item.transaction_id,
+    source_item.transaction_item_id,
+    coalesce(nullif(payload->>'appointment_id', '')::uuid, linked_appointment_id),
+    coalesce(nullif(payload->>'associate_id', '')::uuid, source_item.associate_id),
+    coalesce(nullif(payload->>'case_type', ''), 'Assessment'),
+    requested_status,
+    coalesce(nullif(payload->>'priority', ''), 'Normal'),
+    nullif(payload->>'presenting_concern', ''),
+    nullif(payload->>'internal_notes', ''),
+    nullif(payload->>'report_due_date', '')::date,
+    coalesce(
+      nullif(payload->>'target_release_date', '')::date,
+      nullif(payload->>'report_due_date', '')::date
+    ),
+    current_user_id,
+    current_user_id
+  )
+  returning * into new_case;
+
+  insert into public.case_progress_logs (
+    case_id,
+    from_status,
+    to_status,
+    notes,
+    changed_by_user_id,
+    changed_by_associate_id
+  )
+  values (
+    new_case.id,
+    null,
+    new_case.status,
+    'Case created from transaction item',
+    current_user_id,
+    public.case_current_associate_id()
+  );
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case created from transaction item successfully.',
+    'data', public.case_to_json(new_case)
+  );
+exception
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more linked records do not exist.');
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Case could not be created because one or more IDs are invalid.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_list_all()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.case_can_use_module() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_by_client(target_client_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.case_can_use_module() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Client cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where c.client_id = target_client_id
+        and public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_by_associate(target_associate_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.case_can_use_module() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  if not public.case_can_access_associate(target_associate_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases assigned to this associate.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Associate cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where c.associate_id = target_associate_id
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_by_status(target_status text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.case_can_use_module() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  if not public.case_is_valid_status(target_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || coalesce(target_status, ''));
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Cases loaded by status successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.created_at desc)
+      from public.cases c
+      where c.status = target_status
+        and public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_list_overdue(target_date date default ((now() at time zone 'Asia/Manila')::date))
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.case_can_use_module() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view cases.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Overdue cases loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_to_json(c) order by c.target_release_date asc, c.created_at desc)
+      from public.cases c
+      where c.target_release_date is not null
+        and c.target_release_date < target_date
+        and c.status not in ('Released', 'Closed', 'Cancelled')
+        and public.case_can_access_associate(c.associate_id)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_update_status(
+  target_case_id uuid,
+  new_status text,
+  status_notes text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  previous_case public.cases;
+  updated_case public.cases;
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.case_can_manage_cases() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to update case status.');
+  end if;
+
+  if not public.case_is_valid_status(new_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid case status: ' || coalesce(new_status, ''));
+  end if;
+
+  select *
+  into previous_case
+  from public.cases
+  where id = target_case_id;
+
+  if previous_case.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case was not found.');
+  end if;
+
+  update public.cases
+  set
+    status = new_status,
+    updated_by_user_id = current_user_id,
+    released_at = case when new_status = 'Released' then coalesce(released_at, now()) else released_at end,
+    closed_at = case when new_status in ('Closed', 'Cancelled') then coalesce(closed_at, now()) else closed_at end
+  where id = target_case_id
+  returning * into updated_case;
+
+  if previous_case.status is distinct from new_status and nullif(status_notes, '') is not null then
+    update public.case_progress_logs
+    set notes = status_notes
+    where id = (
+      select id
+      from public.case_progress_logs
+      where case_id = target_case_id
+        and from_status = previous_case.status
+        and to_status = new_status
+      order by created_at desc
+      limit 1
+    );
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case status updated successfully.',
+    'data', public.case_to_json(updated_case)
+  );
+exception
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_assign_associate(
+  target_case_id uuid,
+  target_associate_id uuid,
+  assignment_note text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  updated_case public.cases;
+begin
+  if not public.case_can_manage_cases() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to assign associates to cases.');
+  end if;
+
+  if target_associate_id is not null and not exists (
+    select 1
+    from public.mental_health_associates
+    where id = target_associate_id
+      and is_active = true
+  ) then
+    return jsonb_build_object('success', false, 'message', 'Associate was not found or is inactive.');
+  end if;
+
+  update public.cases
+  set
+    associate_id = target_associate_id,
+    updated_by_user_id = public.case_current_user_id()
+  where id = target_case_id
+  returning * into updated_case;
+
+  if updated_case.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case was not found.');
+  end if;
+
+  if nullif(assignment_note, '') is not null then
+    insert into public.case_progress_logs (
+      case_id,
+      from_status,
+      to_status,
+      notes,
+      changed_by_user_id,
+      changed_by_associate_id
+    )
+    values (
+      updated_case.id,
+      updated_case.status,
+      updated_case.status,
+      assignment_note,
+      public.case_current_user_id(),
+      public.case_current_associate_id()
+    );
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Associate assigned successfully.',
+    'data', public.case_to_json(updated_case)
+  );
+end;
+$$;
+
+create or replace function public.case_add_progress_note(
+  target_case_id uuid,
+  progress_note text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  target_case public.cases;
+  inserted_log public.case_progress_logs;
+begin
+  if not public.case_can_add_progress(target_case_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to add progress notes for this case.');
+  end if;
+
+  if progress_note is null or length(trim(progress_note)) = 0 then
+    return jsonb_build_object('success', false, 'message', 'Progress note is required.');
+  end if;
+
+  select *
+  into target_case
+  from public.cases
+  where id = target_case_id;
+
+  if target_case.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case was not found.');
+  end if;
+
+  insert into public.case_progress_logs (
+    case_id,
+    from_status,
+    to_status,
+    notes,
+    changed_by_user_id,
+    changed_by_associate_id
+  )
+  values (
+    target_case.id,
+    target_case.status,
+    target_case.status,
+    trim(progress_note),
+    public.case_current_user_id(),
+    public.case_current_associate_id()
+  )
+  returning * into inserted_log;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Progress note added successfully.',
+    'data', to_jsonb(inserted_log)
+  );
+end;
+$$;
+
+create or replace function public.case_list_progress_logs(target_case_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  target_case public.cases;
+begin
+  if not public.case_can_use_module() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view case progress.');
+  end if;
+
+  select *
+  into target_case
+  from public.cases
+  where id = target_case_id;
+
+  if target_case.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case was not found.');
+  end if;
+
+  if not public.case_can_access_associate(target_case.associate_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view progress for this case.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case progress loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(to_jsonb(logs) order by logs.created_at desc)
+      from public.case_progress_logs logs
+      where logs.case_id = target_case_id
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_task_create(payload jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  parent_case public.cases;
+  new_task public.case_tasks;
+  requested_status text := coalesce(nullif(payload->>'status', ''), 'Pending');
+  current_user_id uuid := public.case_current_user_id();
+begin
+  if not public.case_can_manage_cases() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to create case tasks.');
+  end if;
+
+  if payload->>'case_id' is null or payload->>'case_id' = '' then
+    return jsonb_build_object('success', false, 'message', 'Case is required to create a task.');
+  end if;
+
+  if not public.case_is_valid_task_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid task status: ' || requested_status);
+  end if;
+
+  if payload->>'title' is null or length(trim(payload->>'title')) = 0 then
+    return jsonb_build_object('success', false, 'message', 'Task title is required.');
+  end if;
+
+  select *
+  into parent_case
+  from public.cases
+  where id = (payload->>'case_id')::uuid;
+
+  if parent_case.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case was not found.');
+  end if;
+
+  insert into public.case_tasks (
+    case_id,
+    title,
+    description,
+    status,
+    assigned_to_user_id,
+    assigned_to_associate_id,
+    due_date,
+    completed_at,
+    created_by_user_id
+  )
+  values (
+    parent_case.id,
+    trim(payload->>'title'),
+    nullif(payload->>'description', ''),
+    requested_status,
+    nullif(payload->>'assigned_to_user_id', '')::uuid,
+    nullif(payload->>'assigned_to_associate_id', '')::uuid,
+    nullif(payload->>'due_date', '')::date,
+    case when requested_status = 'Completed' then now() else null end,
+    current_user_id
+  )
+  returning * into new_task;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case task created successfully.',
+    'data', public.case_task_to_json(new_task)
+  );
+exception
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be created because one or more IDs are invalid.');
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be created because one or more linked records do not exist.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+create or replace function public.case_task_update(
+  target_task_id uuid,
+  payload jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  existing_task public.case_tasks;
+  updated_task public.case_tasks;
+  requested_status text;
+begin
+  if not public.case_can_update_task(target_task_id) then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to update this case task.');
+  end if;
+
+  select *
+  into existing_task
+  from public.case_tasks
+  where id = target_task_id;
+
+  if existing_task.id is null then
+    return jsonb_build_object('success', false, 'message', 'Case task was not found.');
+  end if;
+
+  requested_status := coalesce(nullif(payload->>'status', ''), existing_task.status);
+
+  if not public.case_is_valid_task_status(requested_status) then
+    return jsonb_build_object('success', false, 'message', 'Invalid task status: ' || requested_status);
+  end if;
+
+  update public.case_tasks
+  set
+    title = coalesce(nullif(payload->>'title', ''), title),
+    description = case
+      when payload ? 'description' then nullif(payload->>'description', '')
+      else description
+    end,
+    status = requested_status,
+    assigned_to_user_id = case
+      when payload ? 'assigned_to_user_id' and public.case_can_manage_cases() then nullif(payload->>'assigned_to_user_id', '')::uuid
+      else assigned_to_user_id
+    end,
+    assigned_to_associate_id = case
+      when payload ? 'assigned_to_associate_id' and public.case_can_manage_cases() then nullif(payload->>'assigned_to_associate_id', '')::uuid
+      else assigned_to_associate_id
+    end,
+    due_date = case
+      when payload ? 'due_date' and public.case_can_manage_cases() then nullif(payload->>'due_date', '')::date
+      else due_date
+    end,
+    completed_at = case
+      when requested_status = 'Completed' then coalesce(completed_at, now())
+      when existing_task.status = 'Completed' and requested_status <> 'Completed' then null
+      else completed_at
+    end
+  where id = target_task_id
+  returning * into updated_task;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case task updated successfully.',
+    'data', public.case_task_to_json(updated_task)
+  );
+exception
+  when invalid_text_representation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be updated because one or more IDs are invalid.');
+  when foreign_key_violation then
+    return jsonb_build_object('success', false, 'message', 'Task could not be updated because one or more linked records do not exist.');
+  when others then
+    return jsonb_build_object('success', false, 'message', SQLERRM);
+end;
+$$;
+
+drop policy if exists cases_select_scheduling_users on public.cases;
+drop policy if exists cases_insert_scheduling_users on public.cases;
+drop policy if exists cases_update_scheduling_users on public.cases;
+drop policy if exists cases_delete_admin_users on public.cases;
+drop policy if exists cases_select_case_users on public.cases;
+drop policy if exists cases_insert_case_managers on public.cases;
+drop policy if exists cases_update_case_managers on public.cases;
+
+create policy cases_select_case_users
+on public.cases
+for select
+to authenticated
+using (
+  public.case_can_use_module()
+  and public.case_can_access_associate(associate_id)
+);
+
+create policy cases_insert_case_managers
+on public.cases
+for insert
+to authenticated
+with check (public.case_can_manage_cases());
+
+create policy cases_update_case_managers
+on public.cases
+for update
+to authenticated
+using (public.case_can_manage_cases())
+with check (public.case_can_manage_cases());
+
+create policy cases_delete_admin_users
+on public.cases
+for delete
+to authenticated
+using (public.is_admin_user(auth.uid()));
+
+drop policy if exists case_progress_logs_select_scheduling_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_insert_scheduling_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_update_scheduling_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_delete_admin_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_select_case_users on public.case_progress_logs;
+drop policy if exists case_progress_logs_insert_case_contributors on public.case_progress_logs;
+drop policy if exists case_progress_logs_update_case_managers on public.case_progress_logs;
+
+create policy case_progress_logs_select_case_users
+on public.case_progress_logs
+for select
+to authenticated
+using (
+  public.case_can_use_module()
+  and exists (
+    select 1
+    from public.cases c
+    where c.id = case_progress_logs.case_id
+      and public.case_can_access_associate(c.associate_id)
+  )
+);
+
+create policy case_progress_logs_insert_case_contributors
+on public.case_progress_logs
+for insert
+to authenticated
+with check (public.case_can_add_progress(case_id));
+
+create policy case_progress_logs_update_case_managers
+on public.case_progress_logs
+for update
+to authenticated
+using (public.case_can_manage_cases())
+with check (public.case_can_manage_cases());
+
+create policy case_progress_logs_delete_admin_users
+on public.case_progress_logs
+for delete
+to authenticated
+using (public.is_admin_user(auth.uid()));
+
+drop policy if exists case_tasks_select_scheduling_users on public.case_tasks;
+drop policy if exists case_tasks_insert_scheduling_users on public.case_tasks;
+drop policy if exists case_tasks_update_scheduling_users on public.case_tasks;
+drop policy if exists case_tasks_delete_admin_users on public.case_tasks;
+drop policy if exists case_tasks_select_case_users on public.case_tasks;
+drop policy if exists case_tasks_insert_case_managers on public.case_tasks;
+drop policy if exists case_tasks_update_case_contributors on public.case_tasks;
+
+create policy case_tasks_select_case_users
+on public.case_tasks
+for select
+to authenticated
+using (
+  public.case_can_use_module()
+  and exists (
+    select 1
+    from public.cases c
+    where c.id = case_tasks.case_id
+      and public.case_can_access_associate(c.associate_id)
+  )
+);
+
+create policy case_tasks_insert_case_managers
+on public.case_tasks
+for insert
+to authenticated
+with check (public.case_can_manage_cases());
+
+create policy case_tasks_update_case_contributors
+on public.case_tasks
+for update
+to authenticated
+using (public.case_can_update_task(id))
+with check (public.case_can_update_task(id));
+
+create policy case_tasks_delete_admin_users
+on public.case_tasks
+for delete
+to authenticated
+using (public.is_admin_user(auth.uid()));
+
+grant execute on function public.case_add_progress_note(uuid, text) to authenticated;
+grant execute on function public.case_list_progress_logs(uuid) to authenticated;
+grant execute on function public.case_assign_associate(uuid, uuid, text) to authenticated;
+
+-- ============================================================================
+-- INCLUDED SOURCE: database/11_add_case_ui_support.sql
+-- ============================================================================
+-- UI support RPCs for Case Management.
+-- Run after database/10_add_case_role_access.sql.
+
+create or replace function public.case_can_view_payment_status()
+returns boolean
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select coalesce(public.case_current_role(), '') in (
+    'admin',
+    'manager',
+    'case_staff'
+  );
+$$;
+
+create or replace function public.case_to_json(case_row public.cases)
+returns jsonb
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select jsonb_build_object(
+    'id', case_row.id,
+    'case_number', case_row.case_number,
+    'client_id', case_row.client_id,
+    'client_name', (select full_name from public.clients where id = case_row.client_id),
+    'client', (
+      select jsonb_build_object(
+        'id', c.id,
+        'client_code', c.client_code,
+        'full_name', c.full_name,
+        'contact_number', c.contact_number,
+        'email', c.email,
+        'sex', c.sex,
+        'age', c.age
+      )
+      from public.clients c
+      where c.id = case_row.client_id
+    ),
+    'service_id', case_row.service_id,
+    'service_name', (select name from public.services where id = case_row.service_id),
+    'transaction_id', case_row.transaction_id,
+    'transaction_number', (
+      select transaction_number
+      from public.transactions
+      where id = case_row.transaction_id
+    ),
+    'payment_status', case
+      when public.case_can_view_payment_status() then (
+        select payment_status
+        from public.transactions
+        where id = case_row.transaction_id
+      )
+      else null
+    end,
+    'transaction_item_id', case_row.transaction_item_id,
+    'appointment_id', case_row.appointment_id,
+    'associate_id', case_row.associate_id,
+    'associate_name', (
+      select full_name
+      from public.mental_health_associates
+      where id = case_row.associate_id
+    ),
+    'case_type', case_row.case_type,
+    'status', case_row.status,
+    'report_status', case_row.status,
+    'priority', case_row.priority,
+    'presenting_concern', case_row.presenting_concern,
+    'internal_notes', case_row.internal_notes,
+    'report_due_date', case_row.report_due_date,
+    'target_release_date', case_row.target_release_date,
+    'released_at', case_row.released_at,
+    'closed_at', case_row.closed_at,
+    'created_by_user_id', case_row.created_by_user_id,
+    'updated_by_user_id', case_row.updated_by_user_id,
+    'created_at', case_row.created_at,
+    'updated_at', case_row.updated_at
+  );
+$$;
+
+create or replace function public.case_list_tasks(target_case_id uuid default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.case_can_use_module() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to view case tasks.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case tasks loaded successfully.',
+    'data', coalesce((
+      select jsonb_agg(public.case_task_to_json(t) order by t.due_date nulls last, t.created_at desc)
+      from public.case_tasks t
+      join public.cases c on c.id = t.case_id
+      where (target_case_id is null or t.case_id = target_case_id)
+        and public.case_can_access_associate(c.associate_id)
+        and (
+          coalesce(public.case_current_role(), '') <> 'associate_user'
+          or t.assigned_to_associate_id = public.case_current_associate_id()
+          or c.associate_id = public.case_current_associate_id()
+        )
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+create or replace function public.case_form_options()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+begin
+  if not public.case_can_manage_cases() then
+    return jsonb_build_object('success', false, 'message', 'You are not authorized to load case form options.');
+  end if;
+
+  return jsonb_build_object(
+    'success', true,
+    'message', 'Case form options loaded successfully.',
+    'data', jsonb_build_object(
+      'clients', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'id', c.id,
+          'client_code', c.client_code,
+          'full_name', c.full_name,
+          'contact_number', c.contact_number,
+          'email', c.email
+        ) order by c.full_name)
+        from public.clients c
+      ), '[]'::jsonb),
+      'services', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'id', s.id,
+          'name', s.name,
+          'category', s.category
+        ) order by s.name)
+        from public.services s
+        where s.is_active = true
+      ), '[]'::jsonb),
+      'associates', coalesce((
+        select jsonb_agg(jsonb_build_object(
+          'id', a.id,
+          'full_name', a.full_name,
+          'title', a.title,
+          'profession', a.profession
+        ) order by a.full_name)
+        from public.mental_health_associates a
+        where a.is_active = true
+      ), '[]'::jsonb)
+    )
+  );
+end;
+$$;
+
+grant execute on function public.case_can_view_payment_status() to authenticated;
+grant execute on function public.case_list_tasks(uuid) to authenticated;
+grant execute on function public.case_form_options() to authenticated;
+
+-- ============================================================================
+-- INCLUDED SOURCE: database/12_connect_cases_to_pos_transactions.sql
+-- ============================================================================
+-- Connect Case Management to POS transaction items.
+-- Run after database/11_add_case_ui_support.sql.
+
+alter table public.services
+  add column if not exists requires_case_management boolean not null default false;
+
+create index if not exists services_requires_case_management_idx
+  on public.services (requires_case_management)
+  where requires_case_management = true;
+
+alter table public.cases
+  add column if not exists report_status text not null default 'Not Started';
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'cases_report_status_check'
+      and conrelid = 'public.cases'::regclass
+  ) then
+    alter table public.cases
+      add constraint cases_report_status_check
+      check (
+        report_status in (
+          'Not Started',
+          'In Progress',
+          'For Review',
+          'For Revision',
+          'Ready for Release',
+          'Released',
+          'Cancelled'
+        )
+      );
+  end if;
+end $$;
+
+create index if not exists cases_report_status_idx
+  on public.cases (report_status);
+
+create unique index if not exists cases_transaction_item_unique_idx
+  on public.cases (transaction_item_id)
+  where transaction_item_id is not null;
+
+create or replace function public.case_to_json(case_row public.cases)
+returns jsonb
+language sql
+security definer
+set search_path = public
+set row_security = off
+as $$
+  select jsonb_build_object(
+    'id', case_row.id,
+    'case_number', case_row.case_number,
+    'client_id', case_row.client_id,
+    'client_name', (select full_name from public.clients where id = case_row.client_id),
+    'client', (
+      select jsonb_build_object(
+        'id', c.id,
+        'client_code', c.client_code,
+        'full_name', c.full_name,
+        'contact_number', c.contact_number,
+        'email', c.email,
+        'sex', c.sex,
+        'age', c.age
+      )
+      from public.clients c
+      where c.id = case_row.client_id
+    ),
+    'service_id', case_row.service_id,
+    'service_name', (select name from public.services where id = case_row.service_id),
+    'transaction_id', case_row.transaction_id,
+    'transaction_number', (
+      select transaction_number
+      from public.transactions
+      where id = case_row.transaction_id
+    ),
+    'payment_status', case
+      when public.case_can_view_payment_status() then (
+        select payment_status
+        from public.transactions
+        where id = case_row.transaction_id
+      )
+      else null
+    end,
+    'transaction_item_id', case_row.transaction_item_id,
+    'appointment_id', case_row.appointment_id,
+    'associate_id', case_row.associate_id,
+    'associate_name', (
+      select full_name
+      from public.mental_health_associates
+      where id = case_row.associate_id
+    ),
+    'case_type', case_row.case_type,
+    'status', case_row.status,
+    'report_status', case_row.report_status,
+    'priority', case_row.priority,
+    'presenting_concern', case_row.presenting_concern,
+    'internal_notes', case_row.internal_notes,
+    'report_due_date', case_row.report_due_date,
+    'target_release_date', case_row.target_release_date,
+    'released_at', case_row.released_at,
+    'closed_at', case_row.closed_at,
+    'created_by_user_id', case_row.created_by_user_id,
+    'updated_by_user_id', case_row.updated_by_user_id,
+    'created_at', case_row.created_at,
+    'updated_at', case_row.updated_at
+  );
+$$;
+
+create or replace function public.create_case_from_transaction_item_trigger()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+set row_security = off
+as $$
+declare
+  source_transaction public.transactions;
+  source_service public.services;
+  release_target date;
+  created_case public.cases;
+begin
+  if new.service_id is null then
+    return new;
+  end if;
+
+  select *
+  into source_service
+  from public.services
+  where id = new.service_id;
+
+  if not coalesce(source_service.requires_case_management, false) then
+    return new;
+  end if;
+
+  if exists (
+    select 1
+    from public.cases
+    where transaction_item_id = new.id
+  ) then
+    return new;
+  end if;
+
+  select *
+  into source_transaction
+  from public.transactions
+  where id = new.transaction_id;
+
+  if source_transaction.id is null or source_transaction.client_id is null then
+    return new;
+  end if;
+
+  release_target := case
+    when lower(coalesce(source_service.category, '')) = 'assessment' then
+      ((source_transaction.transaction_date at time zone 'Asia/Manila')::date + 30)
+    else null
+  end;
+
+  insert into public.cases (
+    case_number,
+    client_id,
+    service_id,
+    transaction_id,
+    transaction_item_id,
+    associate_id,
+    case_type,
+    status,
+    report_status,
+    priority,
+    target_release_date,
+    report_due_date,
+    presenting_concern,
+    internal_notes
+  )
+  values (
+    null,
+    source_transaction.client_id,
+    new.service_id,
+    new.transaction_id,
+    new.id,
+    new.associate_id,
+    coalesce(nullif(source_service.category, ''), 'Assessment'),
+    'New',
+    'Not Started',
+    'Normal',
+    release_target,
+    release_target,
+    null,
+    'Automatically created from POS transaction item.'
+  )
+  on conflict (transaction_item_id) where transaction_item_id is not null do nothing
+  returning * into created_case;
+
+  if created_case.id is not null then
+    insert into public.case_progress_logs (
+      case_id,
+      from_status,
+      to_status,
+      notes
+    )
+    values (
+      created_case.id,
+      null,
+      'New',
+      'Case automatically created from POS transaction item.'
+    );
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_transaction_items_create_case
+on public.transaction_items;
+
+create trigger trg_transaction_items_create_case
+after insert on public.transaction_items
+for each row
+execute function public.create_case_from_transaction_item_trigger();
+
+-- Make the installed Case Management RPCs immediately visible to PostgREST.
+notify pgrst, 'reload schema';
+
+-- ============================================================================
+-- END INCLUDED CASE MANAGEMENT INSTALLER
+-- ============================================================================

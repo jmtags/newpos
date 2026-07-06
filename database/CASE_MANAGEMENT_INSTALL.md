@@ -1,7 +1,12 @@
 # Case Management database installation
 
-The Case Management workspace requires its database tables, row-level
-security policies, and RPC functions in addition to the base POS setup.
+The one-time installer already includes the complete Case Management backend.
+For a fresh project, run `one_time_new_supabase_setup.sql`; no separate Case
+Management scripts are required.
+
+For an existing project that already has the base POS schema, the Case
+Management tables, row-level security policies, and RPC functions can be
+installed separately using the files below.
 
 In the Supabase SQL Editor, run these files completely and in this order:
 

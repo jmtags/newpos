@@ -1,31 +1,44 @@
 -- Role-based access control for Case Management.
 -- Run after database/9_add_case_management_backend_api.sql.
 
+alter table public.users
+  drop constraint if exists users_role_check;
+
+alter table public.users
+  add constraint users_role_check
+  check (
+    role in (
+      'admin',
+      'manager',
+      'case_staff',
+      'associate_user',
+      'case_viewer',
+      'regular_user'
+    )
+  ) not valid;
+
 do $$
 begin
-  alter table public.users
-    drop constraint if exists users_role_check;
-
   if not exists (
     select 1
-    from pg_constraint
-    where conname = 'users_role_check'
-      and conrelid = 'public.users'::regclass
+    from public.users
+    where role not in (
+      'admin',
+      'manager',
+      'case_staff',
+      'associate_user',
+      'case_viewer',
+      'regular_user'
+    )
   ) then
     alter table public.users
-      add constraint users_role_check
-      check (
-        role in (
-          'admin',
-          'manager',
-          'case_staff',
-          'associate_user',
-          'case_viewer',
-          'regular_user'
-        )
-      );
+      validate constraint users_role_check;
+  else
+    raise notice
+      'Legacy user roles were preserved. Review unsupported roles in public.users.';
   end if;
-end $$;
+end;
+$$;
 
 create or replace function public.case_role_values()
 returns text[]
