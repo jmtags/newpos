@@ -15,6 +15,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Settings2,
   UserRound
 } from 'lucide-react';
 import { Badge } from '../components/Badge';
@@ -30,6 +31,7 @@ import {
   CaseTask,
   CaseTaskStatus,
   CaseFormOptions,
+  CaseWorkflow,
   caseManagementService
 } from '../services/caseManagement.service';
 import type { AppUser } from '../services/userService';
@@ -65,7 +67,7 @@ const REPORT_STATUSES = [
 
 const PAYMENT_STATUSES = ['Paid', 'Partial', 'Unpaid', 'Overpaid', 'Void'] as const;
 
-const CASE_STATUS_ACCENTS: Record<CaseStatus, string> = {
+const CASE_STATUS_ACCENTS: Record<string, string> = {
   New: 'bg-sky-500',
   Scheduled: 'bg-indigo-500',
   'Testing Ongoing': 'bg-violet-500',
@@ -189,6 +191,30 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     services: [],
     associates: []
   });
+  const [workflow, setWorkflow] = useState<CaseWorkflow>({
+    groups: [],
+    columns: CASE_STATUSES.map((status, index) => ({
+      id: status,
+      group_id: null,
+      status_key: status,
+      name: status,
+      color: '#0f9d91',
+      sort_order: index * 10,
+      is_terminal: ['Released', 'Closed', 'Cancelled'].includes(status),
+      is_active: true
+    }))
+  });
+  const [showWorkflowEditor, setShowWorkflowEditor] = useState(false);
+  const [workflowGroupForm, setWorkflowGroupForm] = useState({
+    name: '',
+    color: '#0f9d91'
+  });
+  const [workflowColumnForm, setWorkflowColumnForm] = useState({
+    group_id: '',
+    name: '',
+    color: '#0f9d91',
+    is_terminal: false
+  });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [movingCaseId, setMovingCaseId] = useState<string | null>(null);
@@ -237,6 +263,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
   };
   const canViewPayment = ['admin', 'manager', 'case_staff'].includes(role || '');
   const canManageCases = ['admin', 'manager', 'case_staff'].includes(role || '');
+  const canConfigureWorkflow = ['admin', 'manager'].includes(role || '');
   const canEditTasks = ['admin', 'manager', 'case_staff', 'associate_user'].includes(role || '');
   const canAddProgress = ['admin', 'manager', 'case_staff', 'associate_user'].includes(role || '');
 
@@ -245,13 +272,15 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
       setLoading(true);
       setError('');
 
-      const [caseRows, taskRows] = await Promise.all([
+      const [caseRows, taskRows, workflowData] = await Promise.all([
         caseManagementService.listCases(),
-        caseManagementService.listTasks()
+        caseManagementService.listTasks(),
+        caseManagementService.getWorkflow()
       ]);
 
       setCases(caseRows);
       setTasks(taskRows);
+      setWorkflow(workflowData);
 
       if (canManageCases) {
         const options = await caseManagementService.getFormOptions();
@@ -568,7 +597,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     if (!canManageCases || caseItem.status === status) return;
 
     if (
-      ['Released', 'Closed', 'Cancelled'].includes(status)
+      workflow.columns.find((column) => column.status_key === status)?.is_terminal
       && !window.confirm(
         `Move ${caseItem.case_number} from ${caseItem.status} to ${status}?`
       )
@@ -607,6 +636,54 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
       await handleBoardStatusChange(caseItem, status);
     } else {
       setDragOverStatus(null);
+    }
+  };
+
+  const statusOptions = workflow.columns.map((column) => ({
+    value: column.status_key,
+    label: column.name
+  }));
+
+  const handleCreateWorkflowGroup = async () => {
+    if (!workflowGroupForm.name.trim()) return;
+    try {
+      setSaving(true);
+      setError('');
+      await caseManagementService.createWorkflowGroup({
+        name: workflowGroupForm.name.trim(),
+        color: workflowGroupForm.color
+      });
+      setWorkflow(await caseManagementService.getWorkflow());
+      setWorkflowGroupForm({ name: '', color: '#0f9d91' });
+    } catch (err: any) {
+      setError(err.message || 'Unable to create workflow group.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCreateWorkflowColumn = async () => {
+    if (!workflowColumnForm.name.trim()) return;
+    try {
+      setSaving(true);
+      setError('');
+      await caseManagementService.createWorkflowColumn({
+        group_id: workflowColumnForm.group_id || null,
+        name: workflowColumnForm.name.trim(),
+        color: workflowColumnForm.color,
+        is_terminal: workflowColumnForm.is_terminal
+      });
+      setWorkflow(await caseManagementService.getWorkflow());
+      setWorkflowColumnForm({
+        group_id: '',
+        name: '',
+        color: '#0f9d91',
+        is_terminal: false
+      });
+    } catch (err: any) {
+      setError(err.message || 'Unable to create workflow column.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -697,7 +774,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
           }
           options={[
             { value: '', label: 'All case statuses' },
-            ...CASE_STATUSES.map((status) => ({ value: status, label: status }))
+            ...statusOptions
           ]}
         />
         <Select
@@ -881,12 +958,102 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
               className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
+          {canConfigureWorkflow && (
+            <Button
+              variant="outline"
+              onClick={() => setShowWorkflowEditor((visible) => !visible)}
+            >
+              <Settings2 className="mr-2 h-4 w-4" />
+              Configure Board
+            </Button>
+          )}
         </div>
       </Card>
 
+      {canConfigureWorkflow && showWorkflowEditor && (
+        <Card className="p-5">
+          <h3 className="font-semibold text-slate-900">Workflow Configuration</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Add a group, then add columns inside it. Existing card history is preserved.
+          </p>
+          <div className="mt-4 grid gap-6 lg:grid-cols-2">
+            <div className="space-y-3">
+              <Input
+                label="New Group Name"
+                value={workflowGroupForm.name}
+                onChange={(event) =>
+                  setWorkflowGroupForm({ ...workflowGroupForm, name: event.target.value })
+                }
+              />
+              <input
+                type="color"
+                value={workflowGroupForm.color}
+                onChange={(event) =>
+                  setWorkflowGroupForm({ ...workflowGroupForm, color: event.target.value })
+                }
+                className="h-10 w-16 rounded border border-slate-300"
+                aria-label="Group color"
+              />
+              <Button onClick={handleCreateWorkflowGroup} disabled={saving}>
+                Add Group
+              </Button>
+            </div>
+            <div className="space-y-3">
+              <Select
+                label="Group"
+                value={workflowColumnForm.group_id}
+                onChange={(event) =>
+                  setWorkflowColumnForm({ ...workflowColumnForm, group_id: event.target.value })
+                }
+                options={[
+                  { value: '', label: 'No group' },
+                  ...workflow.groups.map((group) => ({ value: group.id, label: group.name }))
+                ]}
+              />
+              <Input
+                label="New Column Name"
+                value={workflowColumnForm.name}
+                onChange={(event) =>
+                  setWorkflowColumnForm({ ...workflowColumnForm, name: event.target.value })
+                }
+              />
+              <div className="flex items-center gap-4">
+                <input
+                  type="color"
+                  value={workflowColumnForm.color}
+                  onChange={(event) =>
+                    setWorkflowColumnForm({ ...workflowColumnForm, color: event.target.value })
+                  }
+                  className="h-10 w-16 rounded border border-slate-300"
+                  aria-label="Column color"
+                />
+                <label className="flex items-center gap-2 text-sm text-slate-600">
+                  <input
+                    type="checkbox"
+                    checked={workflowColumnForm.is_terminal}
+                    onChange={(event) =>
+                      setWorkflowColumnForm({
+                        ...workflowColumnForm,
+                        is_terminal: event.target.checked
+                      })
+                    }
+                  />
+                  Terminal status
+                </label>
+              </div>
+              <Button onClick={handleCreateWorkflowColumn} disabled={saving}>
+                Add Column
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <div className="overflow-x-auto pb-4 [scrollbar-color:#94a3b8_transparent] [scrollbar-width:thin]">
         <div className="flex min-h-[600px] w-max items-start gap-4">
-          {CASE_STATUSES.map((status) => {
+          {workflow.columns.map((column) => {
+            const status = column.status_key;
+            const group = workflow.groups.find((item) => item.id === column.group_id);
             const statusCases = filteredCases.filter(
               (caseItem) => caseItem.status === status
             );
@@ -911,11 +1078,19 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                 <div className="mb-3 flex items-center justify-between px-1">
                   <div className="flex min-w-0 items-center gap-2">
                     <span
-                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${CASE_STATUS_ACCENTS[status]}`}
+                      className={`h-2.5 w-2.5 shrink-0 rounded-full ${CASE_STATUS_ACCENTS[status] || ''}`}
+                      style={CASE_STATUS_ACCENTS[status] ? undefined : { backgroundColor: column.color }}
                     />
-                    <h4 className="truncate text-sm font-semibold text-slate-800">
-                      {status}
-                    </h4>
+                    <div className="min-w-0">
+                      {group && (
+                        <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                          {group.name}
+                        </p>
+                      )}
+                      <h4 className="truncate text-sm font-semibold text-slate-800">
+                        {column.name}
+                      </h4>
+                    </div>
                   </div>
                   <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-slate-500 shadow-sm">
                     {statusCases.length}
@@ -1123,7 +1298,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
             onChange={(event) =>
               setCaseForm({ ...caseForm, status: event.target.value as CaseStatus })
             }
-            options={CASE_STATUSES.map((status) => ({ value: status, label: status }))}
+            options={statusOptions}
           />
           <Select
             label="Priority"
@@ -1380,7 +1555,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                     label="Current Status"
                     value={newStatus}
                     onChange={(event) => setNewStatus(event.target.value as CaseStatus)}
-                    options={CASE_STATUSES.map((status) => ({ value: status, label: status }))}
+                    options={statusOptions}
                   />
                   <Input
                     label="Progress Remark"

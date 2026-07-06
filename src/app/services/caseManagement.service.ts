@@ -23,7 +23,7 @@ export const CASE_TASK_STATUSES = [
   'Cancelled'
 ] as const;
 
-export type CaseStatus = (typeof CASE_STATUSES)[number];
+export type CaseStatus = string;
 export type CaseTaskStatus = (typeof CASE_TASK_STATUSES)[number];
 
 export interface CaseRecord {
@@ -140,6 +140,30 @@ export interface CaseFormOptions {
   }>;
 }
 
+export interface CaseWorkflowGroup {
+  id: string;
+  name: string;
+  color: string;
+  sort_order: number;
+  is_active: boolean;
+}
+
+export interface CaseWorkflowColumn {
+  id: string;
+  group_id: string | null;
+  status_key: string;
+  name: string;
+  color: string;
+  sort_order: number;
+  is_terminal: boolean;
+  is_active: boolean;
+}
+
+export interface CaseWorkflow {
+  groups: CaseWorkflowGroup[];
+  columns: CaseWorkflowColumn[];
+}
+
 interface RpcEnvelope<T> {
   success: boolean;
   message: string;
@@ -147,8 +171,8 @@ interface RpcEnvelope<T> {
 }
 
 const assertValidCaseStatus = (status: string) => {
-  if (!CASE_STATUSES.includes(status as CaseStatus)) {
-    throw new Error(`Invalid case status: ${status}`);
+  if (!status.trim()) {
+    throw new Error('Case status is required.');
   }
 };
 
@@ -311,5 +335,25 @@ export const caseManagementService = {
 
   async getFormOptions(): Promise<CaseFormOptions> {
     return callRpc<CaseFormOptions>('case_form_options');
+  },
+
+  async getWorkflow(): Promise<CaseWorkflow> {
+    return callRpc<CaseWorkflow>('case_workflow_list');
+  },
+
+  async createWorkflowGroup(payload: {
+    name: string;
+    color?: string;
+  }): Promise<CaseWorkflowGroup> {
+    return callRpc<CaseWorkflowGroup>('case_workflow_create_group', { payload });
+  },
+
+  async createWorkflowColumn(payload: {
+    group_id: string | null;
+    name: string;
+    color?: string;
+    is_terminal?: boolean;
+  }): Promise<CaseWorkflowColumn> {
+    return callRpc<CaseWorkflowColumn>('case_workflow_create_column', { payload });
   }
 };

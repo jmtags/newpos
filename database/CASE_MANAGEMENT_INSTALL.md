@@ -15,6 +15,7 @@ In the Supabase SQL Editor, run these files completely and in this order:
 3. `10_add_case_role_access.sql`
 4. `11_add_case_ui_support.sql`
 5. `12_connect_cases_to_pos_transactions.sql`
+6. `18_add_configurable_case_workflow.sql`
 
 The scripts are written to update an existing project safely. The final
 script requests a PostgREST schema-cache reload.
