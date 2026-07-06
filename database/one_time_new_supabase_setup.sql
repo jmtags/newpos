@@ -4906,6 +4906,16 @@ begin
 end;
 $$;
 
+-- Repair the trigger as well as the function. Existing projects may have the
+-- function installed while the transaction-item trigger is missing.
+drop trigger if exists trg_transaction_items_create_case
+on public.transaction_items;
+
+create trigger trg_transaction_items_create_case
+after insert on public.transaction_items
+for each row
+execute function public.create_case_from_transaction_item_trigger();
+
 notify pgrst, 'reload schema';
 
 -- ============================================================================

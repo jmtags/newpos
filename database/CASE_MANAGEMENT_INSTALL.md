@@ -26,7 +26,8 @@ Automatic POS case creation applies only to services with **Create a case
 automatically when this service is sold** enabled. Migration 20 routes those
 new cases to the active `MAIN_START` group's `MAIN_NEW` column. If that
 configuration is unavailable, it falls back to `New`, then the first active
-workflow column.
+workflow column. Migration 20 also recreates the transaction-item trigger, so
+it can be safely rerun if automatic case creation becomes disconnected.
 
 After installation, verify the RPC exists:
 
