@@ -48,9 +48,28 @@ create table if not exists public.users (
 );
 
 alter table public.users
+  add column if not exists auth_user_id uuid,
   add column if not exists must_change_password boolean not null default false;
 
-create index if not exists users_auth_user_id_idx on public.users (auth_user_id);
+-- Older installations only allowed admin, manager, and regular_user.
+-- Replace that legacy constraint before case-specific users are created.
+alter table public.users
+  drop constraint if exists users_role_check;
+
+alter table public.users
+  add constraint users_role_check
+  check (role in (
+    'admin',
+    'manager',
+    'case_staff',
+    'associate_user',
+    'case_viewer',
+    'regular_user'
+  ));
+
+-- A legacy users table did not enforce the authentication-account link.
+create unique index if not exists users_auth_user_id_idx
+  on public.users (auth_user_id);
 create index if not exists users_role_idx on public.users (role);
 create index if not exists users_is_active_idx on public.users (is_active);
 
