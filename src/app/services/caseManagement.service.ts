@@ -164,6 +164,18 @@ export interface CaseWorkflow {
   columns: CaseWorkflowColumn[];
 }
 
+export interface CaseWorkflowOrderPayload {
+  groups: Array<{
+    id: string;
+    sort_order: number;
+  }>;
+  columns: Array<{
+    id: string;
+    group_id: string | null;
+    sort_order: number;
+  }>;
+}
+
 interface RpcEnvelope<T> {
   success: boolean;
   message: string;
@@ -355,5 +367,9 @@ export const caseManagementService = {
     is_terminal?: boolean;
   }): Promise<CaseWorkflowColumn> {
     return callRpc<CaseWorkflowColumn>('case_workflow_create_column', { payload });
+  },
+
+  async reorderWorkflow(payload: CaseWorkflowOrderPayload): Promise<CaseWorkflow> {
+    return callRpc<CaseWorkflow>('case_workflow_reorder', { payload });
   }
 };

@@ -32,6 +32,8 @@ import {
   CaseTaskStatus,
   CaseFormOptions,
   CaseWorkflow,
+  CaseWorkflowColumn,
+  CaseWorkflowGroup,
   caseManagementService
 } from '../services/caseManagement.service';
 import type { AppUser } from '../services/userService';
@@ -219,6 +221,10 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
   const [saving, setSaving] = useState(false);
   const [movingCaseId, setMovingCaseId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<CaseStatus | null>(null);
+  const [draggedWorkflowGroupId, setDraggedWorkflowGroupId] = useState<string | null>(null);
+  const [draggedWorkflowColumnId, setDraggedWorkflowColumnId] = useState<string | null>(null);
+  const [dragOverWorkflowGroupId, setDragOverWorkflowGroupId] = useState<string | null>(null);
+  const [dragOverWorkflowColumnId, setDragOverWorkflowColumnId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusNote, setStatusNote] = useState('');
@@ -627,9 +633,8 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     status: CaseStatus
   ) => {
     event.preventDefault();
-    const caseId =
-      event.dataTransfer.getData('application/x-psyzygy-case')
-      || event.dataTransfer.getData('text/plain');
+    event.stopPropagation();
+    const caseId = event.dataTransfer.getData('application/x-psyzygy-case');
     const caseItem = cases.find((item) => item.id === caseId);
 
     if (caseItem) {
@@ -685,6 +690,149 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     } finally {
       setSaving(false);
     }
+  };
+
+  const orderedWorkflowGroups = [...workflow.groups].sort(
+    (left, right) => left.sort_order - right.sort_order || left.name.localeCompare(right.name)
+  );
+
+  const getWorkflowColumnsForGroup = (groupId: string | null) =>
+    workflow.columns
+      .filter((column) => column.group_id === groupId)
+      .sort(
+        (left, right) =>
+          left.sort_order - right.sort_order || left.name.localeCompare(right.name)
+      );
+
+  const boardWorkflowGroups: Array<
+    CaseWorkflowGroup & { is_ungrouped?: boolean }
+  > = [
+    ...orderedWorkflowGroups,
+    ...(getWorkflowColumnsForGroup(null).length > 0
+      ? [{
+          id: '__ungrouped__',
+          name: 'Ungrouped',
+          color: '#94a3b8',
+          sort_order: Number.MAX_SAFE_INTEGER,
+          is_active: true,
+          is_ungrouped: true
+        }]
+      : [])
+  ];
+
+  const persistWorkflowLayout = async (
+    groups: CaseWorkflowGroup[],
+    columns: CaseWorkflowColumn[]
+  ) => {
+    const previousWorkflow = workflow;
+    const normalizedGroups = groups.map((group, index) => ({
+      ...group,
+      sort_order: (index + 1) * 10
+    }));
+    const groupIds: Array<string | null> = [
+      ...normalizedGroups.map((group) => group.id),
+      null
+    ];
+    const normalizedColumns = groupIds.flatMap((groupId) =>
+      columns
+        .filter((column) => column.group_id === groupId)
+        .map((column, index) => ({
+          ...column,
+          sort_order: (index + 1) * 10
+        }))
+    );
+    const nextWorkflow = {
+      groups: normalizedGroups,
+      columns: normalizedColumns
+    };
+
+    setWorkflow(nextWorkflow);
+    setSaving(true);
+    setError('');
+
+    try {
+      const savedWorkflow = await caseManagementService.reorderWorkflow({
+        groups: normalizedGroups.map(({ id, sort_order }) => ({ id, sort_order })),
+        columns: normalizedColumns.map(({ id, group_id, sort_order }) => ({
+          id,
+          group_id,
+          sort_order
+        }))
+      });
+      setWorkflow(savedWorkflow);
+    } catch (err: any) {
+      setWorkflow(previousWorkflow);
+      setError(err.message || 'Unable to save the workflow order.');
+    } finally {
+      setSaving(false);
+      setDraggedWorkflowGroupId(null);
+      setDraggedWorkflowColumnId(null);
+      setDragOverWorkflowGroupId(null);
+      setDragOverWorkflowColumnId(null);
+    }
+  };
+
+  const moveWorkflowGroup = async (
+    sourceId: string,
+    targetId: string,
+    insertAfter: boolean
+  ) => {
+    if (!canConfigureWorkflow || sourceId === targetId) return;
+
+    const groups = [...orderedWorkflowGroups];
+    const sourceIndex = groups.findIndex((group) => group.id === sourceId);
+    if (sourceIndex < 0 || !groups.some((group) => group.id === targetId)) return;
+
+    const [movedGroup] = groups.splice(sourceIndex, 1);
+    const targetIndex = groups.findIndex((group) => group.id === targetId);
+    groups.splice(targetIndex + (insertAfter ? 1 : 0), 0, movedGroup);
+    await persistWorkflowLayout(
+      groups,
+      groups.flatMap((group) => getWorkflowColumnsForGroup(group.id)).concat(
+        getWorkflowColumnsForGroup(null)
+      )
+    );
+  };
+
+  const moveWorkflowColumn = async (
+    sourceId: string,
+    targetGroupId: string | null,
+    targetColumnId?: string,
+    insertAfter = false
+  ) => {
+    if (!canConfigureWorkflow) return;
+    if (sourceId === targetColumnId) return;
+
+    const sourceColumn = workflow.columns.find((column) => column.id === sourceId);
+    if (!sourceColumn) return;
+
+    const columnGroups = new Map<string | null, CaseWorkflowColumn[]>();
+    [...orderedWorkflowGroups.map((group) => group.id), null].forEach((groupId) => {
+      columnGroups.set(
+        groupId,
+        getWorkflowColumnsForGroup(groupId).filter((column) => column.id !== sourceId)
+      );
+    });
+
+    const targetColumns = columnGroups.get(targetGroupId) || [];
+    const targetIndex = targetColumnId
+      ? targetColumns.findIndex((column) => column.id === targetColumnId)
+      : targetColumns.length;
+    targetColumns.splice(
+      targetIndex < 0
+        ? targetColumns.length
+        : targetIndex + (targetColumnId && insertAfter ? 1 : 0),
+      0,
+      { ...sourceColumn, group_id: targetGroupId }
+    );
+    columnGroups.set(targetGroupId, targetColumns);
+
+    await persistWorkflowLayout(
+      orderedWorkflowGroups,
+      [...orderedWorkflowGroups.map((group) => group.id), null].flatMap(
+        (groupId) => columnGroups.get(groupId) || []
+      )
+    );
   };
 
   const renderViewButton = (
@@ -945,7 +1093,9 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
             <h3 className="font-semibold text-slate-900">Case Workflow Board</h3>
             <p className="mt-1 text-sm text-slate-500">
               {canManageCases
-                ? 'Drag cards between columns to update status. Every move is recorded in the case timeline.'
+                ? canConfigureWorkflow
+                  ? 'Drag group and column headers to arrange the board. Drag case cards between columns to update status.'
+                  : 'Drag cards between columns to update status. Every move is recorded in the case timeline.'
                 : 'Your access is read-only. Open a card to review its case details.'}
             </p>
           </div>
@@ -1051,42 +1201,161 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
 
       <div className="overflow-x-auto pb-4 [scrollbar-color:#94a3b8_transparent] [scrollbar-width:thin]">
         <div className="flex min-h-[600px] w-max items-start gap-4">
-          {workflow.columns.map((column) => {
+          {boardWorkflowGroups.map((group) => {
+            const groupId = group.is_ungrouped ? null : group.id;
+            const groupColumns = getWorkflowColumnsForGroup(groupId);
+            const isGroupDropTarget = dragOverWorkflowGroupId === group.id;
+
+            return (
+              <section
+                key={group.id}
+                className={`shrink-0 rounded-3xl border bg-white/70 p-3 shadow-sm transition-all ${
+                  isGroupDropTarget
+                    ? 'border-teal-400 ring-2 ring-teal-100'
+                    : 'border-slate-200'
+                }`}
+                style={{ borderTopColor: group.color, borderTopWidth: 4 }}
+                onDragOver={(event) => {
+                  if (!canConfigureWorkflow) return;
+                  if (!draggedWorkflowGroupId && !draggedWorkflowColumnId) return;
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = 'move';
+                  setDragOverWorkflowGroupId(group.id);
+                }}
+                onDrop={(event) => {
+                  if (!canConfigureWorkflow) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (draggedWorkflowColumnId) {
+                    void moveWorkflowColumn(draggedWorkflowColumnId, groupId);
+                  } else if (draggedWorkflowGroupId && !group.is_ungrouped) {
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    void moveWorkflowGroup(
+                      draggedWorkflowGroupId,
+                      group.id,
+                      event.clientX > bounds.left + bounds.width / 2
+                    );
+                  }
+                }}
+              >
+                <header
+                  draggable={canConfigureWorkflow && !group.is_ungrouped && !saving}
+                  onDragStart={(event) => {
+                    if (group.is_ungrouped) return;
+                    event.stopPropagation();
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData(
+                      'application/x-psyzygy-workflow-group',
+                      group.id
+                    );
+                    setDraggedWorkflowGroupId(group.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedWorkflowGroupId(null);
+                    setDragOverWorkflowGroupId(null);
+                  }}
+                  className={`mb-3 flex items-center justify-between rounded-2xl px-3 py-2.5 ${
+                    canConfigureWorkflow && !group.is_ungrouped
+                      ? 'cursor-grab active:cursor-grabbing'
+                      : ''
+                  }`}
+                  style={{ backgroundColor: `${group.color}14` }}
+                >
+                  <div className="flex items-center gap-2">
+                    {canConfigureWorkflow && !group.is_ungrouped && (
+                      <GripVertical className="h-4 w-4 text-slate-400" />
+                    )}
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800">{group.name}</h4>
+                      <p className="text-[11px] text-slate-500">
+                        {groupColumns.length} column{groupColumns.length === 1 ? '' : 's'}
+                      </p>
+                    </div>
+                  </div>
+                  {saving && isGroupDropTarget && (
+                    <RefreshCw className="h-4 w-4 animate-spin text-teal-600" />
+                  )}
+                </header>
+
+                <div className="flex min-h-[520px] items-start gap-3">
+          {groupColumns.map((column) => {
             const status = column.status_key;
-            const group = workflow.groups.find((item) => item.id === column.group_id);
             const statusCases = filteredCases.filter(
               (caseItem) => caseItem.status === status
             );
             const isDropTarget = dragOverStatus === status;
+            const isColumnDropTarget = dragOverWorkflowColumnId === column.id;
 
             return (
               <div
                 key={status}
                 className={`w-[294px] shrink-0 rounded-2xl border p-3 transition-colors ${
-                  isDropTarget
+                  isColumnDropTarget
+                    ? 'border-violet-400 bg-violet-50/80 ring-2 ring-violet-100'
+                    : isDropTarget
                     ? 'border-teal-400 bg-teal-50/80'
                     : 'border-slate-200 bg-slate-100/70'
                 }`}
                 onDragOver={(event) => {
-                  if (!canManageCases) return;
+                  if (draggedWorkflowColumnId && canConfigureWorkflow) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    event.dataTransfer.dropEffect = 'move';
+                    setDragOverWorkflowColumnId(column.id);
+                    setDragOverWorkflowGroupId(group.id);
+                    return;
+                  }
+                  if (!canManageCases || !movingCaseId) return;
                   event.preventDefault();
+                  event.stopPropagation();
                   event.dataTransfer.dropEffect = 'move';
                   setDragOverStatus(status);
                 }}
-                onDrop={(event) => handleCaseDrop(event, status)}
+                onDrop={(event) => {
+                  if (draggedWorkflowColumnId && canConfigureWorkflow) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    void moveWorkflowColumn(
+                      draggedWorkflowColumnId,
+                      groupId,
+                      column.id,
+                      event.clientX > bounds.left + bounds.width / 2
+                    );
+                    return;
+                  }
+                  void handleCaseDrop(event, status);
+                }}
               >
-                <div className="mb-3 flex items-center justify-between px-1">
+                <div
+                  draggable={canConfigureWorkflow && !saving}
+                  onDragStart={(event) => {
+                    event.stopPropagation();
+                    event.dataTransfer.effectAllowed = 'move';
+                    event.dataTransfer.setData(
+                      'application/x-psyzygy-workflow-column',
+                      column.id
+                    );
+                    setDraggedWorkflowColumnId(column.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedWorkflowColumnId(null);
+                    setDragOverWorkflowColumnId(null);
+                    setDragOverWorkflowGroupId(null);
+                  }}
+                  className={`mb-3 flex items-center justify-between px-1 ${
+                    canConfigureWorkflow ? 'cursor-grab active:cursor-grabbing' : ''
+                  }`}
+                >
                   <div className="flex min-w-0 items-center gap-2">
+                    {canConfigureWorkflow && (
+                      <GripVertical className="h-4 w-4 shrink-0 text-slate-400" />
+                    )}
                     <span
                       className={`h-2.5 w-2.5 shrink-0 rounded-full ${CASE_STATUS_ACCENTS[status] || ''}`}
                       style={CASE_STATUS_ACCENTS[status] ? undefined : { backgroundColor: column.color }}
                     />
                     <div className="min-w-0">
-                      {group && (
-                        <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-slate-400">
-                          {group.name}
-                        </p>
-                      )}
                       <h4 className="truncate text-sm font-semibold text-slate-800">
                         {column.name}
                       </h4>
@@ -1202,6 +1471,23 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                   )}
                 </div>
               </div>
+            );
+          })}
+                  {groupColumns.length === 0 && (
+                    <div
+                      className={`flex h-32 w-[294px] items-center justify-center rounded-2xl border border-dashed px-6 text-center text-sm ${
+                        isGroupDropTarget
+                          ? 'border-teal-400 bg-teal-50 text-teal-700'
+                          : 'border-slate-300 bg-slate-50 text-slate-400'
+                      }`}
+                    >
+                      {canConfigureWorkflow
+                        ? 'Drop a workflow column into this group'
+                        : 'No columns in this group'}
+                    </div>
+                  )}
+                </div>
+              </section>
             );
           })}
         </div>
