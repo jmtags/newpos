@@ -218,3 +218,6 @@ create trigger trg_transaction_items_create_case
 after insert on public.transaction_items
 for each row
 execute function public.create_case_from_transaction_item_trigger();
+
+-- Make the installed Case Management RPCs immediately visible to PostgREST.
+notify pgrst, 'reload schema';

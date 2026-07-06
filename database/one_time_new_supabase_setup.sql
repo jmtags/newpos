@@ -7,6 +7,13 @@
 --
 -- After running this script, deploy the Edge Function separately:
 --   supabase functions deploy ai-clinic-assistant
+--
+-- Case Management currently requires these additional scripts, in order:
+--   database/8_add_case_management_module.sql
+--   database/9_add_case_management_backend_api.sql
+--   database/10_add_case_role_access.sql
+--   database/11_add_case_ui_support.sql
+--   database/12_connect_cases_to_pos_transactions.sql
 
 create extension if not exists pgcrypto with schema extensions;
 

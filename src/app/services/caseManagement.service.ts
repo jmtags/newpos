@@ -174,6 +174,17 @@ const callRpc = async <T>(name: string, params?: Record<string, unknown>): Promi
   const { data, error } = await supabase.rpc(name, params || {});
 
   if (error) {
+    if (
+      error.code === 'PGRST202'
+      || error.message?.includes(`public.${name}`)
+      || error.message?.includes('schema cache')
+    ) {
+      throw new Error(
+        'The Case Management database backend is not installed yet. '
+        + 'Run database migrations 8 through 12 in order, then reload the Supabase schema cache.'
+      );
+    }
+
     throw new Error(error.message);
   }
 
