@@ -4,6 +4,8 @@ import {
   BarChart3,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   ClipboardList,
   Clock,
   Eye,
@@ -225,6 +227,9 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
   const [draggedWorkflowColumnId, setDraggedWorkflowColumnId] = useState<string | null>(null);
   const [dragOverWorkflowGroupId, setDragOverWorkflowGroupId] = useState<string | null>(null);
   const [dragOverWorkflowColumnId, setDragOverWorkflowColumnId] = useState<string | null>(null);
+  const [collapsedWorkflowGroupIds, setCollapsedWorkflowGroupIds] = useState<Set<string>>(
+    new Set()
+  );
   const [error, setError] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusNote, setStatusNote] = useState('');
@@ -719,6 +724,31 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
         }]
       : [])
   ];
+  const collapsedVisibleWorkflowGroupCount = boardWorkflowGroups.filter((group) =>
+    collapsedWorkflowGroupIds.has(group.id)
+  ).length;
+
+  const toggleWorkflowGroup = (groupId: string) => {
+    setCollapsedWorkflowGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  };
+
+  const collapseAllWorkflowGroups = () => {
+    setCollapsedWorkflowGroupIds(
+      new Set(boardWorkflowGroups.map((group) => group.id))
+    );
+  };
+
+  const showAllWorkflowGroups = () => {
+    setCollapsedWorkflowGroupIds(new Set());
+  };
 
   const persistWorkflowLayout = async (
     groups: CaseWorkflowGroup[],
@@ -1099,24 +1129,48 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                 : 'Your access is read-only. Open a card to review its case details.'}
             </p>
           </div>
-          <div className="relative w-full lg:max-w-sm">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-            <input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search case, client, service, or associate"
-              className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
-          </div>
-          {canConfigureWorkflow && (
+          <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
+            <div className="relative min-w-[260px] flex-1 lg:w-80 lg:flex-none">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search case, client, service, or associate"
+                className="w-full rounded-xl border border-slate-300 bg-white py-2.5 pl-9 pr-3 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+            </div>
             <Button
+              size="sm"
               variant="outline"
-              onClick={() => setShowWorkflowEditor((visible) => !visible)}
+              onClick={collapseAllWorkflowGroups}
+              disabled={
+                boardWorkflowGroups.length === 0
+                || collapsedVisibleWorkflowGroupCount === boardWorkflowGroups.length
+              }
             >
-              <Settings2 className="mr-2 h-4 w-4" />
-              Configure Board
+              <ChevronRight className="mr-1.5 h-4 w-4" />
+              Collapse All Groups
             </Button>
-          )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={showAllWorkflowGroups}
+              disabled={collapsedVisibleWorkflowGroupCount === 0}
+            >
+              <ChevronDown className="mr-1.5 h-4 w-4" />
+              Show All Groups
+            </Button>
+            {canConfigureWorkflow && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowWorkflowEditor((visible) => !visible)}
+              >
+                <Settings2 className="mr-2 h-4 w-4" />
+                Configure Board
+              </Button>
+            )}
+          </div>
         </div>
       </Card>
 
@@ -1205,11 +1259,22 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
             const groupId = group.is_ungrouped ? null : group.id;
             const groupColumns = getWorkflowColumnsForGroup(groupId);
             const isGroupDropTarget = dragOverWorkflowGroupId === group.id;
+            const isCollapsed = collapsedWorkflowGroupIds.has(group.id);
+            const groupCaseCount = groupColumns.reduce(
+              (total, column) =>
+                total
+                + filteredCases.filter(
+                  (caseItem) => caseItem.status === column.status_key
+                ).length,
+              0
+            );
 
             return (
               <section
                 key={group.id}
                 className={`shrink-0 rounded-3xl border bg-white/70 p-3 shadow-sm transition-all ${
+                  isCollapsed ? 'w-[230px]' : ''
+                } ${
                   isGroupDropTarget
                     ? 'border-teal-400 ring-2 ring-teal-100'
                     : 'border-slate-200'
@@ -1254,7 +1319,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                     setDraggedWorkflowGroupId(null);
                     setDragOverWorkflowGroupId(null);
                   }}
-                  className={`mb-3 flex items-center justify-between rounded-2xl px-3 py-2.5 ${
+                  className={`${isCollapsed ? '' : 'mb-3'} flex items-center justify-between rounded-2xl px-3 py-2.5 ${
                     canConfigureWorkflow && !group.is_ungrouped
                       ? 'cursor-grab active:cursor-grabbing'
                       : ''
@@ -1269,14 +1334,37 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                       <h4 className="text-sm font-bold text-slate-800">{group.name}</h4>
                       <p className="text-[11px] text-slate-500">
                         {groupColumns.length} column{groupColumns.length === 1 ? '' : 's'}
+                        {' · '}
+                        {groupCaseCount} case{groupCaseCount === 1 ? '' : 's'}
                       </p>
                     </div>
                   </div>
-                  {saving && isGroupDropTarget && (
-                    <RefreshCw className="h-4 w-4 animate-spin text-teal-600" />
-                  )}
+                  <div className="flex items-center gap-1">
+                    {saving && isGroupDropTarget && (
+                      <RefreshCw className="h-4 w-4 animate-spin text-teal-600" />
+                    )}
+                    <button
+                      type="button"
+                      draggable={false}
+                      onMouseDown={(event) => event.stopPropagation()}
+                      onDragStart={(event) => event.preventDefault()}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleWorkflowGroup(group.id);
+                      }}
+                      className="rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-white/80 hover:text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                      aria-label={`${isCollapsed ? 'Expand' : 'Collapse'} ${group.name}`}
+                      aria-expanded={!isCollapsed}
+                      title={`${isCollapsed ? 'Expand' : 'Collapse'} group`}
+                    >
+                      {isCollapsed
+                        ? <ChevronRight className="h-4 w-4" />
+                        : <ChevronDown className="h-4 w-4" />}
+                    </button>
+                  </div>
                 </header>
 
+                {!isCollapsed && (
                 <div className="flex min-h-[520px] items-start gap-3">
           {groupColumns.map((column) => {
             const status = column.status_key;
@@ -1487,6 +1575,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                     </div>
                   )}
                 </div>
+                )}
               </section>
             );
           })}
