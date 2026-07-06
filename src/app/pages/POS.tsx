@@ -321,6 +321,8 @@ export const POS: React.FC = () => {
         old_data: null,
         new_data: {
           transaction: receiptSnapshot,
+          payments,
+          notes: transactionNotes,
           amount_added: grandTotal,
           tax_added: taxAmount,
           payment_added: totalPaid,

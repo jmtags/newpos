@@ -71,6 +71,46 @@ const formatScheduledService = (schedule?: any | null) => {
   return [date, time, location].filter(Boolean).join(' | ');
 };
 
+const getAuditPaymentDetails = (log: any) => {
+  const nestedPayments = log.new_data?.payments
+    || log.new_data?.transaction?.payments;
+
+  if (Array.isArray(nestedPayments) && nestedPayments.length > 0) {
+    return nestedPayments.map((payment: any) => ({
+      method: payment.payment_method || payment.method || 'Unspecified',
+      amount: Number(payment.amount || 0),
+      reference: payment.reference_number || payment.reference || '',
+      notes: payment.notes || ''
+    }));
+  }
+
+  const method = log.new_data?.payment_method || log.new_data?.method;
+
+  if (!method) return [];
+
+  return [{
+    method,
+    amount: Number(
+      log.new_data?.payment_amount_recorded
+        ?? log.new_data?.amount_added
+        ?? log.new_data?.amount
+        ?? 0
+    ),
+    reference:
+      log.new_data?.reference_number || log.new_data?.reference || '',
+    notes: log.new_data?.notes || ''
+  }];
+};
+
+const getAuditNotes = (log: any) => {
+  const transactionNotes = log.new_data?.transaction?.notes;
+
+  if (transactionNotes) return transactionNotes;
+  if (String(log.action || '').includes('PAYMENT')) return '';
+
+  return log.new_data?.notes || '';
+};
+
 interface TransactionsProps {
   highlightedTransactionId?: string | null;
   onHighlightConsumed?: () => void;
@@ -305,7 +345,10 @@ export const Transactions: React.FC<TransactionsProps> = ({
         action: 'ADD_PAYMENT',
         old_data: selectedTransaction,
         new_data: {
-          ...paymentForm,
+          payment_method: paymentForm.method,
+          amount: Number(paymentForm.amount || 0),
+          reference_number: paymentForm.reference,
+          notes: paymentForm.notes,
           amount_added: Number(paymentForm.amount || 0),
           previous_total_paid: previousPaid,
           new_total_paid: previousPaid + Number(paymentForm.amount || 0),
@@ -373,7 +416,10 @@ export const Transactions: React.FC<TransactionsProps> = ({
         action: 'REFUND_PAYMENT',
         old_data: selectedTransaction,
         new_data: {
-          ...refundForm,
+          payment_method: refundForm.method,
+          amount: -refundAmount,
+          reference_number: refundForm.reference,
+          notes: `Refund: ${refundForm.reason}`,
           amount_subtracted: refundAmount,
           payment_amount_recorded: -refundAmount,
           previous_total_paid: refundableAmount,
@@ -1661,56 +1707,93 @@ export const Transactions: React.FC<TransactionsProps> = ({
                 No audit logs recorded yet for this transaction.
               </p>
             ) : (
-              auditLogs.map((log) => (
-                <div
-                  key={log.id}
-                  className="p-3 bg-slate-50 border border-slate-200 rounded-lg"
-                >
-                  <div className="flex justify-between gap-3">
-                    <p className="font-semibold text-slate-900">{log.action}</p>
-                    <p className="text-xs text-slate-500">
-                      {new Date(log.created_at).toLocaleString()}
+              auditLogs.map((log) => {
+                const paymentDetails = getAuditPaymentDetails(log);
+                const notes = getAuditNotes(log);
+
+                return (
+                  <div
+                    key={log.id}
+                    className="p-3 bg-slate-50 border border-slate-200 rounded-lg"
+                  >
+                    <div className="flex justify-between gap-3">
+                      <p className="font-semibold text-slate-900">{log.action}</p>
+                      <p className="text-xs text-slate-500">
+                        {new Date(log.created_at).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <p className="text-sm text-slate-600 mt-1">
+                      <strong>Reason:</strong> {log.reason || '-'}
+                    </p>
+
+                    {(log.new_data?.amount_added ||
+                      log.new_data?.amount_subtracted ||
+                      log.new_data?.payment_added) && (
+                      <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                        {log.new_data?.amount_added && (
+                          <p className="text-green-700">
+                            <strong>Amount added:</strong> ₱
+                            {Number(log.new_data.amount_added).toLocaleString()}
+                          </p>
+                        )}
+
+                        {log.new_data?.payment_added && (
+                          <p className="text-green-700">
+                            <strong>Payment added:</strong> ₱
+                            {Number(log.new_data.payment_added).toLocaleString()}
+                          </p>
+                        )}
+
+                        {log.new_data?.amount_subtracted && (
+                          <p className="text-red-700">
+                            <strong>Amount subtracted:</strong> ₱
+                            {Number(
+                              log.new_data.amount_subtracted
+                            ).toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {paymentDetails.length > 0 && (
+                      <div className="mt-2 space-y-1 text-sm text-slate-600">
+                        {paymentDetails.map((payment: any, index: number) => (
+                          <div
+                            key={`${payment.method}-${index}`}
+                            className="rounded border border-slate-200 bg-white p-2"
+                          >
+                            <p>
+                              <strong>Payment type:</strong> {payment.method}
+                              {' — '}₱{Math.abs(payment.amount).toLocaleString()}
+                            </p>
+                            {payment.reference && (
+                              <p>
+                                <strong>Reference:</strong> {payment.reference}
+                              </p>
+                            )}
+                            {payment.notes && (
+                              <p>
+                                <strong>Payment notes:</strong> {payment.notes}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {notes && (
+                      <p className="mt-2 text-sm text-slate-600">
+                        <strong>Notes:</strong> {notes}
+                      </p>
+                    )}
+
+                    <p className="text-sm text-slate-600">
+                      <strong>Performed by:</strong> {log.performed_by || '-'}
                     </p>
                   </div>
-
-                  <p className="text-sm text-slate-600 mt-1">
-                    <strong>Reason:</strong> {log.reason || '-'}
-                  </p>
-
-                  {(log.new_data?.amount_added ||
-                    log.new_data?.amount_subtracted ||
-                    log.new_data?.payment_added) && (
-                    <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                      {log.new_data?.amount_added && (
-                        <p className="text-green-700">
-                          <strong>Amount added:</strong> ₱
-                          {Number(log.new_data.amount_added).toLocaleString()}
-                        </p>
-                      )}
-
-                      {log.new_data?.payment_added && (
-                        <p className="text-green-700">
-                          <strong>Payment added:</strong> ₱
-                          {Number(log.new_data.payment_added).toLocaleString()}
-                        </p>
-                      )}
-
-                      {log.new_data?.amount_subtracted && (
-                        <p className="text-red-700">
-                          <strong>Amount subtracted:</strong> ₱
-                          {Number(
-                            log.new_data.amount_subtracted
-                          ).toLocaleString()}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  <p className="text-sm text-slate-600">
-                    <strong>Performed by:</strong> {log.performed_by || '-'}
-                  </p>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </Modal>
