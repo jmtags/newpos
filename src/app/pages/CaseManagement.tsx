@@ -303,6 +303,7 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
   });
   const boardScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const boardScrollLeftRef = useRef(0);
+  const boardGroupRefs = useRef<Record<string, HTMLElement | null>>({});
 
   const role = currentUser?.role;
   const activeView = workspaceView || internalActiveView;
@@ -870,6 +871,34 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     collapsedWorkflowGroupIds.has(group.id)
   ).length;
 
+  const getWorkflowGroupCaseCount = (
+    group: CaseWorkflowGroup & { is_ungrouped?: boolean }
+  ) => {
+    const groupId = group.is_ungrouped ? null : group.id;
+    const groupColumns = getWorkflowColumnsForGroup(groupId);
+
+    return groupColumns.reduce(
+      (total, column) =>
+        total
+        + filteredCases.filter((caseItem) => caseItem.status === column.status_key).length,
+      0
+    );
+  };
+
+  const scrollToWorkflowGroup = (groupId: string) => {
+    const scrollContainer = boardScrollContainerRef.current;
+    const groupElement = boardGroupRefs.current[groupId];
+
+    if (!scrollContainer || !groupElement) return;
+
+    const nextScrollLeft = Math.max(groupElement.offsetLeft - 12, 0);
+    boardScrollLeftRef.current = nextScrollLeft;
+    scrollContainer.scrollTo({
+      left: nextScrollLeft,
+      behavior: 'smooth'
+    });
+  };
+
   const toggleWorkflowGroup = (groupId: string) => {
     setCollapsedWorkflowGroupIds((current) => {
       const next = new Set(current);
@@ -1395,6 +1424,28 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
         </Card>
       )}
 
+      <div className="sticky top-0 z-10 border-y border-slate-200 bg-slate-50/95 py-3 backdrop-blur">
+        <div className="flex gap-2 overflow-x-auto px-1 [scrollbar-color:#94a3b8_transparent] [scrollbar-width:thin]">
+          {boardWorkflowGroups.map((group) => (
+            <button
+              key={group.id}
+              type="button"
+              onClick={() => scrollToWorkflowGroup(group.id)}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+            >
+              <span
+                className="h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: group.color }}
+              />
+              <span className="max-w-[180px] truncate">{group.name}</span>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                {getWorkflowGroupCaseCount(group)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div
         ref={boardScrollContainerRef}
         onScroll={(event) => {
@@ -1420,6 +1471,9 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
             return (
               <section
                 key={group.id}
+                ref={(element) => {
+                  boardGroupRefs.current[group.id] = element;
+                }}
                 className={`shrink-0 rounded-3xl border bg-white/70 p-3 shadow-sm transition-all ${
                   isCollapsed ? 'w-[230px]' : ''
                 } ${
