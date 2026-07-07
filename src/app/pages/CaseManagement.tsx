@@ -858,6 +858,21 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
       : [])
   ];
 
+  const groupedStatusOptions = boardWorkflowGroups
+    .map((group) => {
+      const groupId = group.is_ungrouped ? null : group.id;
+
+      return {
+        id: group.id,
+        label: group.name,
+        options: getWorkflowColumnsForGroup(groupId).map((column) => ({
+          value: column.status_key,
+          label: column.name
+        }))
+      };
+    })
+    .filter((group) => group.options.length > 0);
+
   useLayoutEffect(() => {
     if (activeView !== 'board') return;
 
@@ -1751,10 +1766,14 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                               className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-60"
                               aria-label={`Move ${caseItem.case_number} to another status`}
                             >
-                              {statusOptions.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
+                              {groupedStatusOptions.map((group) => (
+                                <optgroup key={group.id} label={group.label}>
+                                  {group.options.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </optgroup>
                               ))}
                             </select>
                           </div>
