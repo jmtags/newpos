@@ -1732,6 +1732,34 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
                           )}
                         </div>
 
+                        {canManageCases && (
+                          <div
+                            className="mt-3"
+                            onClick={(event) => event.stopPropagation()}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onDragStart={(event) => event.preventDefault()}
+                          >
+                            <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                              Move to
+                            </label>
+                            <select
+                              value={caseItem.status}
+                              onChange={(event) => {
+                                void handleBoardStatusChange(caseItem, event.target.value as CaseStatus);
+                              }}
+                              disabled={saving || isMoving}
+                              className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:cursor-not-allowed disabled:opacity-60"
+                              aria-label={`Move ${caseItem.case_number} to another status`}
+                            >
+                              {statusOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
                         <div className="mt-3 space-y-1.5 border-t border-slate-100 pt-3 text-xs text-slate-500">
                           <p className="flex items-center gap-1.5">
                             <UserRound className="h-3.5 w-3.5" />
