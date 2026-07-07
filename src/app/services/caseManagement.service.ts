@@ -92,6 +92,17 @@ export interface CaseProgressLog {
   created_at: string;
 }
 
+export interface CaseDocument {
+  id: string;
+  case_id: string;
+  file_name: string;
+  file_path: string;
+  mime_type: string;
+  file_size: number;
+  uploaded_by_user_id: string | null;
+  created_at: string;
+}
+
 export interface CasePayload {
   case_number?: string | null;
   client_id: string;
@@ -204,6 +215,27 @@ const unwrapRpc = <T>(result: RpcEnvelope<T> | null): T => {
   }
 
   return result.data as T;
+};
+
+const caseDocumentBucket = 'case-documents';
+const allowedCaseDocumentMimeTypes = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain'
+]);
+
+const getCaseDocumentMimeType = (file: File) => {
+  if (file.type) return file.type;
+
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (extension === 'pdf') return 'application/pdf';
+  if (extension === 'doc') return 'application/msword';
+  if (extension === 'docx') {
+    return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  }
+  if (extension === 'txt') return 'text/plain';
+  return '';
 };
 
 const callRpc = async <T>(name: string, params?: Record<string, unknown>): Promise<T> => {
@@ -343,6 +375,71 @@ export const caseManagementService = {
       target_case_id: caseId,
       progress_note: progressNote
     });
+  },
+
+  async listDocuments(caseId: string): Promise<CaseDocument[]> {
+    return callRpc<CaseDocument[]>('case_document_list', {
+      target_case_id: caseId
+    });
+  },
+
+  async uploadDocument(caseId: string, file: File): Promise<CaseDocument> {
+    const mimeType = getCaseDocumentMimeType(file);
+
+    if (!allowedCaseDocumentMimeTypes.has(mimeType)) {
+      throw new Error('Only PDF, DOC, DOCX, and text files are allowed.');
+    }
+
+    const extension = file.name.split('.').pop()?.toLowerCase() || 'bin';
+    const safeExtension = ['pdf', 'doc', 'docx', 'txt'].includes(extension)
+      ? extension
+      : 'bin';
+    const path = `${caseId}/${crypto.randomUUID()}.${safeExtension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(caseDocumentBucket)
+      .upload(path, file, {
+        cacheControl: '3600',
+        contentType: mimeType,
+        upsert: false
+      });
+
+    if (uploadError) throw uploadError;
+
+    try {
+      return await callRpc<CaseDocument>('case_document_create', {
+        target_case_id: caseId,
+        file_name: file.name,
+        file_path: path,
+        mime_type: mimeType,
+        file_size: file.size
+      });
+    } catch (error) {
+      await supabase.storage.from(caseDocumentBucket).remove([path]);
+      throw error;
+    }
+  },
+
+  async getDocumentUrl(filePath: string): Promise<string> {
+    const { data, error } = await supabase.storage
+      .from(caseDocumentBucket)
+      .createSignedUrl(filePath, 60 * 60);
+
+    if (error) throw error;
+    return data.signedUrl;
+  },
+
+  async deleteDocument(document: CaseDocument): Promise<CaseDocument> {
+    const deleted = await callRpc<CaseDocument>('case_document_delete', {
+      target_document_id: document.id
+    });
+
+    const { error } = await supabase.storage
+      .from(caseDocumentBucket)
+      .remove([document.file_path]);
+
+    if (error) throw error;
+    return deleted;
   },
 
   async getFormOptions(): Promise<CaseFormOptions> {

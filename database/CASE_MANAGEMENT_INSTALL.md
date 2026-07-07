@@ -18,6 +18,7 @@ In the Supabase SQL Editor, run these files completely and in this order:
 6. `18_add_configurable_case_workflow.sql`
 7. `19_add_case_workflow_reordering.sql`
 8. `20_route_pos_cases_to_main_new.sql`
+9. `21_add_case_document_attachments.sql`
 
 The scripts are written to update an existing project safely. The final
 script requests a PostgREST schema-cache reload.
@@ -28,6 +29,9 @@ new cases to the active `MAIN_START` group's `MAIN_NEW` column. If that
 configuration is unavailable, it falls back to `New`, then the first active
 workflow column. Migration 20 also recreates the transaction-item trigger, so
 it can be safely rerun if automatic case creation becomes disconnected.
+
+Migration 21 adds private case document storage, metadata, and RPC access for
+PDF, DOC, DOCX, and text attachments on case details.
 
 After installation, verify the RPC exists:
 

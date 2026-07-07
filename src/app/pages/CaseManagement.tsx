@@ -10,14 +10,18 @@ import {
   Clock,
   Eye,
   FileCheck2,
+  FileText,
   Flag,
   FolderKanban,
   GripVertical,
   ListChecks,
+  Paperclip,
   Plus,
   RefreshCw,
   Search,
   Settings2,
+  Trash2,
+  Upload,
   UserRound
 } from 'lucide-react';
 import { Badge } from '../components/Badge';
@@ -30,6 +34,7 @@ import {
   CASE_STATUSES,
   CASE_TASK_STATUSES,
   CaseRecord,
+  CaseDocument,
   CaseStatus,
   CaseTask,
   CaseTaskStatus,
@@ -119,6 +124,25 @@ const formatDate = (date?: string | null) => {
   return new Date(`${date}T00:00:00`).toLocaleDateString();
 };
 
+const formatFileSize = (bytes?: number | null) => {
+  if (!bytes) return '0 KB';
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const isTextDocument = (document: CaseDocument) =>
+  document.mime_type === 'text/plain' || document.file_name.toLowerCase().endsWith('.txt');
+
+const isPdfDocument = (document: CaseDocument) =>
+  document.mime_type === 'application/pdf' || document.file_name.toLowerCase().endsWith('.pdf');
+
+const isWordDocument = (document: CaseDocument) =>
+  [
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ].includes(document.mime_type) ||
+  /\.(doc|docx)$/i.test(document.file_name);
+
 const getDaysText = (targetDate?: string | null) => {
   if (!targetDate) return '-';
 
@@ -200,6 +224,13 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
   const [tasks, setTasks] = useState<CaseTask[]>([]);
   const [selectedCase, setSelectedCase] = useState<CaseRecord | null>(null);
   const [progressLogs, setProgressLogs] = useState<any[]>([]);
+  const [caseDocuments, setCaseDocuments] = useState<CaseDocument[]>([]);
+  const [documentViewer, setDocumentViewer] = useState<{
+    document: CaseDocument;
+    url: string;
+    textContent?: string;
+  } | null>(null);
+  const [documentLoading, setDocumentLoading] = useState(false);
   const [formOptions, setFormOptions] = useState<CaseFormOptions>({
     clients: [],
     services: [],
@@ -334,12 +365,17 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     setNewStatus(caseItem.status);
     setNewAssociateId(caseItem.associate_id || '');
     setActiveView('details');
+    setDocumentViewer(null);
 
     try {
-      const logs = await caseManagementService.listProgressLogs(caseItem.id);
+      const [logs, documents] = await Promise.all([
+        caseManagementService.listProgressLogs(caseItem.id),
+        caseManagementService.listDocuments(caseItem.id)
+      ]);
       setProgressLogs(logs);
+      setCaseDocuments(documents);
     } catch (err: any) {
-      setError(err.message || 'Unable to load case progress.');
+      setError(err.message || 'Unable to load case details.');
     }
   };
 
@@ -568,6 +604,64 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
       setProgressLogs(await caseManagementService.listProgressLogs(selectedCase.id));
     } catch (err: any) {
       setError(err.message || 'Unable to add progress note.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUploadDocument = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedCase) return;
+
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    try {
+      setSaving(true);
+      setError('');
+      const document = await caseManagementService.uploadDocument(selectedCase.id, file);
+      setCaseDocuments((current) => [document, ...current]);
+    } catch (err: any) {
+      setError(err.message || 'Unable to upload case document.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleOpenDocument = async (document: CaseDocument) => {
+    try {
+      setDocumentLoading(true);
+      setError('');
+      const url = await caseManagementService.getDocumentUrl(document.file_path);
+
+      if (isTextDocument(document)) {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Unable to load text file.');
+        const textContent = await response.text();
+        setDocumentViewer({ document, url, textContent });
+      } else {
+        setDocumentViewer({ document, url });
+      }
+    } catch (err: any) {
+      setError(err.message || 'Unable to open case document.');
+    } finally {
+      setDocumentLoading(false);
+    }
+  };
+
+  const handleDeleteDocument = async (document: CaseDocument) => {
+    if (!window.confirm(`Delete ${document.file_name}?`)) return;
+
+    try {
+      setSaving(true);
+      setError('');
+      await caseManagementService.deleteDocument(document);
+      setCaseDocuments((current) => current.filter((item) => item.id !== document.id));
+      if (documentViewer?.document.id === document.id) {
+        setDocumentViewer(null);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Unable to delete case document.');
     } finally {
       setSaving(false);
     }
@@ -2037,6 +2131,83 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
           </div>
         )}
 
+        <Card className="p-5">
+          <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="font-semibold text-slate-900">Documents</h3>
+              <p className="text-sm text-slate-500">PDF, Word, and text attachments for this case.</p>
+            </div>
+            {canManageCases && (
+              <label className="inline-flex cursor-pointer items-center justify-center rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-teal-700">
+                <Upload className="mr-2 h-4 w-4" />
+                Upload
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                  className="sr-only"
+                  onChange={handleUploadDocument}
+                  disabled={saving}
+                />
+              </label>
+            )}
+          </div>
+          <div className="divide-y divide-slate-100">
+            {caseDocuments.map((document) => (
+              <div
+                key={document.id}
+                className="flex flex-col gap-3 py-4 lg:flex-row lg:items-center lg:justify-between"
+              >
+                <button
+                  type="button"
+                  onClick={() => void handleOpenDocument(document)}
+                  className="flex min-w-0 flex-1 items-start gap-3 text-left"
+                  disabled={documentLoading}
+                >
+                  <span className="mt-0.5 rounded-lg bg-slate-100 p-2 text-slate-600">
+                    <FileText className="h-5 w-5" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium text-slate-900">
+                      {document.file_name}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      {formatFileSize(document.file_size)} · {new Date(document.created_at).toLocaleString()}
+                    </span>
+                  </span>
+                </button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleOpenDocument(document)}
+                    disabled={documentLoading}
+                  >
+                    <Eye className="mr-1.5 h-4 w-4" />
+                    View
+                  </Button>
+                  {canManageCases && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => void handleDeleteDocument(document)}
+                      disabled={saving}
+                    >
+                      <Trash2 className="mr-1.5 h-4 w-4" />
+                      Delete
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+            {caseDocuments.length === 0 && (
+              <div className="py-8 text-center text-sm text-slate-500">
+                <Paperclip className="mx-auto mb-2 h-5 w-5 text-slate-400" />
+                No documents attached.
+              </div>
+            )}
+          </div>
+        </Card>
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <Card className="p-5">
             <h3 className="font-semibold text-slate-900 mb-4">Progress Timeline</h3>
@@ -2133,6 +2304,57 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
           {activeView === 'release' && renderCaseListView(releaseCases, 'Ready for Release')}
         </>
       )}
+
+      <Modal
+        isOpen={Boolean(documentViewer)}
+        onClose={() => setDocumentViewer(null)}
+        title={documentViewer?.document.file_name || 'Document'}
+        size="xl"
+      >
+        {documentViewer && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm text-slate-500">
+                {formatFileSize(documentViewer.document.file_size)}
+              </p>
+              <a
+                href={documentViewer.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
+              >
+                Open in New Tab
+              </a>
+            </div>
+            {isTextDocument(documentViewer.document) && (
+              <pre className="min-h-[60vh] overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800 whitespace-pre-wrap">
+                {documentViewer.textContent || ''}
+              </pre>
+            )}
+            {isPdfDocument(documentViewer.document) && (
+              <iframe
+                title={documentViewer.document.file_name}
+                src={documentViewer.url}
+                className="h-[70vh] w-full rounded-lg border border-slate-200"
+              />
+            )}
+            {isWordDocument(documentViewer.document) && (
+              <iframe
+                title={documentViewer.document.file_name}
+                src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(documentViewer.url)}`}
+                className="h-[70vh] w-full rounded-lg border border-slate-200"
+              />
+            )}
+            {!isTextDocument(documentViewer.document) &&
+              !isPdfDocument(documentViewer.document) &&
+              !isWordDocument(documentViewer.document) && (
+                <div className="rounded-lg border border-slate-200 p-8 text-center text-sm text-slate-500">
+                  This file type cannot be previewed.
+                </div>
+              )}
+          </div>
+        )}
+      </Modal>
 
       <Modal
         isOpen={isTaskDialogOpen}
