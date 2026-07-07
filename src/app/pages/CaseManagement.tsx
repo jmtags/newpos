@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   BarChart3,
@@ -301,6 +301,8 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     report_status: '',
     payment_status: ''
   });
+  const boardScrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const boardScrollLeftRef = useRef(0);
 
   const role = currentUser?.role;
   const activeView = workspaceView || internalActiveView;
@@ -345,6 +347,10 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
   }, [role]);
 
   const loadCaseDetails = async (caseItem: CaseRecord) => {
+    if (activeView === 'board' && boardScrollContainerRef.current) {
+      boardScrollLeftRef.current = boardScrollContainerRef.current.scrollLeft;
+    }
+
     setSelectedCase(caseItem);
     setNewStatus(caseItem.status);
     setNewAssociateId(caseItem.associate_id || '');
@@ -850,6 +856,16 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
         }]
       : [])
   ];
+
+  useLayoutEffect(() => {
+    if (activeView !== 'board') return;
+
+    const scrollContainer = boardScrollContainerRef.current;
+    if (!scrollContainer) return;
+
+    scrollContainer.scrollLeft = boardScrollLeftRef.current;
+  }, [activeView, boardWorkflowGroups.length, workflow.columns.length]);
+
   const collapsedVisibleWorkflowGroupCount = boardWorkflowGroups.filter((group) =>
     collapsedWorkflowGroupIds.has(group.id)
   ).length;
@@ -1379,7 +1395,13 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
         </Card>
       )}
 
-      <div className="overflow-x-auto pb-4 [scrollbar-color:#94a3b8_transparent] [scrollbar-width:thin]">
+      <div
+        ref={boardScrollContainerRef}
+        onScroll={(event) => {
+          boardScrollLeftRef.current = event.currentTarget.scrollLeft;
+        }}
+        className="overflow-x-auto pb-4 [scrollbar-color:#94a3b8_transparent] [scrollbar-width:thin]"
+      >
         <div className="flex min-h-[600px] w-max items-start gap-4">
           {boardWorkflowGroups.map((group) => {
             const groupId = group.is_ungrouped ? null : group.id;
