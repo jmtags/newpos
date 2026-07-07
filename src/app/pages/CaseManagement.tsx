@@ -344,22 +344,6 @@ export const CaseManagement: React.FC<CaseManagementProps> = ({
     loadData();
   }, [role]);
 
-  useEffect(() => {
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === 'visible') {
-        void loadData();
-      }
-    };
-
-    window.addEventListener('focus', refreshWhenVisible);
-    document.addEventListener('visibilitychange', refreshWhenVisible);
-
-    return () => {
-      window.removeEventListener('focus', refreshWhenVisible);
-      document.removeEventListener('visibilitychange', refreshWhenVisible);
-    };
-  }, [role]);
-
   const loadCaseDetails = async (caseItem: CaseRecord) => {
     setSelectedCase(caseItem);
     setNewStatus(caseItem.status);
