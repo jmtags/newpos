@@ -6,6 +6,7 @@ export const roleLabels: Record<UserRole, string> = {
   case_staff: 'Case Staff',
   associate_user: 'Associate User',
   case_viewer: 'Case Viewer',
+  expense_user: 'Expense User',
   regular_user: 'Regular User'
 };
 
@@ -22,6 +23,7 @@ export const caseOnlyRoles: UserRole[] = [
   'associate_user',
   'case_viewer'
 ];
+export const expenseOnlyRoles: UserRole[] = ['expense_user'];
 
 export const canAccessPage = (role: UserRole | undefined, page: string) => {
   if (!role) return false;
@@ -30,6 +32,10 @@ export const canAccessPage = (role: UserRole | undefined, page: string) => {
 
   if (caseOnlyRoles.includes(role)) {
     return page === 'cases';
+  }
+
+  if (expenseOnlyRoles.includes(role)) {
+    return page === 'expenses';
   }
 
   if (role === 'regular_user') {
@@ -58,5 +64,6 @@ export const canAccessPage = (role: UserRole | undefined, page: string) => {
 
 export const getDefaultPageForRole = (role: UserRole | undefined) => {
   if (role && caseOnlyRoles.includes(role)) return 'cases';
+  if (role && expenseOnlyRoles.includes(role)) return 'expenses';
   return 'dashboard';
 };

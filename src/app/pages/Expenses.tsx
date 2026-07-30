@@ -335,13 +335,11 @@ export const Expenses: React.FC<{ currentUser: AppUser | null }> = ({
                         </button>
                       )}
                       <Button size="sm" variant="outline" onClick={() => openEdit(expense)}><Pencil className="h-4 w-4" /></Button>
-                      {expense.status !== 'Void' && (
-                        <Button size="sm" variant="danger" onClick={async () => {
-                          if (!window.confirm('Void this expense? It will remain in the audit trail.')) return;
-                          await expenseService.voidExpense(expense.id);
-                          await load();
-                        }}><Trash2 className="h-4 w-4" /></Button>
-                      )}
+                      <Button size="sm" variant="danger" onClick={async () => {
+                        if (!window.confirm('Delete this expense? This cannot be undone.')) return;
+                        await expenseService.deleteExpense(expense.id);
+                        await load();
+                      }}><Trash2 className="h-4 w-4" /></Button>
                     </div>
                   </td>
                 </tr>

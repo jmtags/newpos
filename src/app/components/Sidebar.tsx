@@ -142,9 +142,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const visibleSchedulingItems = schedulingItems.filter((item) =>
     canAccessPage(currentRole, item.id)
   );
-  const visibleFinanceItems = ['admin', 'manager'].includes(currentRole || '')
-    ? financeItems
-    : [];
+  const visibleFinanceItems =
+    currentRole === 'expense_user'
+      ? financeItems.filter((item) => item.id === 'expenses')
+      : ['admin', 'manager'].includes(currentRole || '')
+        ? financeItems
+        : [];
   const newTransactionItem = visibleMenuItems.find((item) => item.id === 'pos');
   const navigationGroups: NavigationGroup[] = [
     ...groupDefinitions.map((group) => ({

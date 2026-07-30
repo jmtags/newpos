@@ -130,6 +130,15 @@ export const expenseService = {
     return this.updateExpense(id, { status: 'Void' });
   },
 
+  async deleteExpense(id: string) {
+    const { error } = await supabase
+      .from('expenses')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+  },
+
   async uploadReceipt(file: File, authUserId: string) {
     const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
     const safeExtension = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(extension)

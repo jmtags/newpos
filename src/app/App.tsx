@@ -32,6 +32,7 @@ import {
   canAccessPage,
   caseModuleRoles,
   caseOnlyRoles,
+  expenseOnlyRoles,
   getDefaultPageForRole
 } from './lib/accessControl';
 
@@ -527,7 +528,11 @@ export default function App() {
   }
 
   const shouldLoadPosData =
-    !currentUser?.role || !caseOnlyRoles.includes(currentUser.role);
+    !currentUser?.role
+    || (
+      !caseOnlyRoles.includes(currentUser.role)
+      && !expenseOnlyRoles.includes(currentUser.role)
+    );
 
   return (
     <AppProvider shouldLoadData={shouldLoadPosData}>

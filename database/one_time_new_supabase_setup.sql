@@ -35,6 +35,7 @@ create table if not exists public.users (
       'case_staff',
       'associate_user',
       'case_viewer',
+      'expense_user',
       'regular_user'
     )),
   is_active boolean not null default true,
@@ -60,6 +61,7 @@ alter table public.users
     'case_staff',
     'associate_user',
     'case_viewer',
+    'expense_user',
     'regular_user'
   )) not valid;
 
@@ -77,6 +79,7 @@ begin
       'case_staff',
       'associate_user',
       'case_viewer',
+      'expense_user',
       'regular_user'
     )
   ) then
@@ -533,7 +536,7 @@ as $$
     select 1
     from public.users
     where auth_user_id = auth_id
-      and role in ('admin', 'manager')
+      and role in ('admin', 'manager', 'expense_user')
       and is_active = true
   );
 $$;
@@ -718,6 +721,7 @@ begin
     'case_staff',
     'associate_user',
     'case_viewer',
+    'expense_user',
     'regular_user'
   ) then
     raise exception 'Invalid user role: %', new_role;
@@ -2890,6 +2894,7 @@ alter table public.users
       'case_staff',
       'associate_user',
       'case_viewer',
+      'expense_user',
       'regular_user'
     )
   ) not valid;
@@ -2905,6 +2910,7 @@ begin
       'case_staff',
       'associate_user',
       'case_viewer',
+      'expense_user',
       'regular_user'
     )
   ) then
@@ -2928,6 +2934,7 @@ as $$
     'case_staff',
     'associate_user',
     'case_viewer',
+    'expense_user',
     'regular_user'
   ]::text[];
 $$;

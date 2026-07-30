@@ -6,6 +6,7 @@ export type UserRole =
   | 'case_staff'
   | 'associate_user'
   | 'case_viewer'
+  | 'expense_user'
   | 'regular_user';
 
 export interface AppUser {

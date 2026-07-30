@@ -14,6 +14,7 @@ const roleOptions = [
   { value: 'case_staff', label: 'Case Staff' },
   { value: 'associate_user', label: 'Associate User' },
   { value: 'case_viewer', label: 'Case Viewer' },
+  { value: 'expense_user', label: 'Expense User' },
   { value: 'regular_user', label: 'Regular User' }
 ];
 
@@ -23,6 +24,7 @@ const roleBadgeVariants: Record<UserRole, 'danger' | 'info' | 'default'> = {
   case_staff: 'info',
   associate_user: 'default',
   case_viewer: 'default',
+  expense_user: 'info',
   regular_user: 'default'
 };
 
