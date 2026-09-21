@@ -38,6 +38,8 @@ import {
   type GovernmentTransactionInput,
   type GovernmentTransactionItem,
   type GovernmentMasterRecord,
+  type GovernmentSoaBatch,
+  type GovernmentSoaBatchSettingsInput,
   type GovernmentSupportDocument,
   type GovernmentSupportDocumentType,
   type GovernmentSocialWorker,
@@ -116,6 +118,12 @@ const createDefaultDocumentSettings = (): GovernmentDocumentSettingsInput => ({
     'Prepared for government guarantee letter processing and billing documentation.'
 });
 
+const createDefaultSoaBatchSettings = (): GovernmentSoaBatchSettingsInput => ({
+  default_prepared_by_name: 'Dr. Josevy A. Taguibao, RPsy, RGC, LPT',
+  default_prepared_by_title: 'Director & Psychologist, Service Provider',
+  default_received_by_label: 'SIGNATURE OVER PRINTED/NAME/DATE'
+});
+
 const currency = new Intl.NumberFormat('en-PH', {
   style: 'currency',
   currency: 'PHP'
@@ -127,6 +135,8 @@ const formatDate = (dateValue?: string) => {
   if (!dateValue) return new Date().toLocaleDateString();
   return new Date(`${dateValue}T00:00:00`).toLocaleDateString();
 };
+
+const toInputDate = (dateValue?: string | null) => dateValue || '';
 
 const getStatusLabel = (status: GovernmentTransactionStatus) =>
   statusDefinitions.find((item) => item.id === status)?.label || status;
@@ -162,6 +172,20 @@ export const GovernmentTransactions: React.FC = () => {
   const [documentSettingsId, setDocumentSettingsId] = useState('');
   const [documentSettings, setDocumentSettings] =
     useState<GovernmentDocumentSettingsInput>(createDefaultDocumentSettings);
+  const [soaBatchSettingsId, setSoaBatchSettingsId] = useState('');
+  const [soaBatchSettings, setSoaBatchSettings] =
+    useState<GovernmentSoaBatchSettingsInput>(createDefaultSoaBatchSettings);
+  const [soaBatches, setSoaBatches] = useState<GovernmentSoaBatch[]>([]);
+  const [soaBatchFilter, setSoaBatchFilter] = useState({
+    batch_name: '',
+    lgu_agency_id: '',
+    date_from: '',
+    date_to: ''
+  });
+  const [selectedSoaTransactionIds, setSelectedSoaTransactionIds] = useState<string[]>([]);
+  const [showSoaBatchSettingsModal, setShowSoaBatchSettingsModal] = useState(false);
+  const [showSoaBatchPreview, setShowSoaBatchPreview] = useState(false);
+  const [soaBatchPreviewRows, setSoaBatchPreviewRows] = useState<GovernmentTransaction[]>([]);
   const [selectedTransaction, setSelectedTransaction] =
     useState<GovernmentTransaction | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -252,12 +276,22 @@ export const GovernmentTransactions: React.FC = () => {
   };
 
   const loadMasterData = async () => {
-    const [cswd, lgu, workers, clinic, documentSettingsData] = await Promise.all([
+    const [
+      cswd,
+      lgu,
+      workers,
+      clinic,
+      documentSettingsData,
+      soaBatchSettingsData,
+      soaBatchData
+    ] = await Promise.all([
       governmentTransactionService.listCswdOffices(),
       governmentTransactionService.listLguAgencies(),
       governmentTransactionService.listSocialWorkers(),
       settingsService.getClinicSettings(),
-      governmentTransactionService.getDocumentSettings()
+      governmentTransactionService.getDocumentSettings(),
+      governmentTransactionService.getSoaBatchSettings(),
+      governmentTransactionService.listSoaBatches()
     ]);
 
     setCswdOffices(cswd);
@@ -278,6 +312,17 @@ export const GovernmentTransactions: React.FC = () => {
       setDocumentSettingsId('');
       setDocumentSettings(createDefaultDocumentSettings());
     }
+
+    if (soaBatchSettingsData) {
+      const { id, created_at, updated_at, ...settings } = soaBatchSettingsData;
+      setSoaBatchSettingsId(id);
+      setSoaBatchSettings(settings);
+    } else {
+      setSoaBatchSettingsId('');
+      setSoaBatchSettings(createDefaultSoaBatchSettings());
+    }
+
+    setSoaBatches(soaBatchData);
   };
 
   const loadSupportDocuments = async (transactionId?: string) => {
@@ -356,6 +401,48 @@ export const GovernmentTransactions: React.FC = () => {
       totalReceivable
     };
   }, [transactions]);
+
+  const soaBatchCandidates = useMemo(() => {
+    return transactions.filter((transaction) => {
+      const statusAllowed = [
+        'service_completed',
+        'soa_submitted',
+        'awaiting_cheque',
+        'payment_completed'
+      ].includes(transaction.status);
+      if (!statusAllowed) return false;
+
+      if (
+        soaBatchFilter.lgu_agency_id &&
+        transaction.lgu_agency_id !== soaBatchFilter.lgu_agency_id
+      ) {
+        return false;
+      }
+
+      const comparisonDate =
+        transaction.service_completed_date ||
+        transaction.schedule_date ||
+        transaction.referral_date;
+
+      if (soaBatchFilter.date_from && comparisonDate < soaBatchFilter.date_from) {
+        return false;
+      }
+
+      if (soaBatchFilter.date_to && comparisonDate > soaBatchFilter.date_to) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [soaBatchFilter, transactions]);
+
+  const selectedSoaTransactions = useMemo(
+    () =>
+      transactions.filter((transaction) =>
+        selectedSoaTransactionIds.includes(transaction.id)
+      ),
+    [selectedSoaTransactionIds, transactions]
+  );
 
   const resetForm = () => {
     setForm(createEmptyForm());
@@ -586,6 +673,85 @@ export const GovernmentTransactions: React.FC = () => {
     }
   };
 
+  const saveSoaBatchSettings = async () => {
+    try {
+      const saved = await governmentTransactionService.saveSoaBatchSettings(
+        soaBatchSettingsId || undefined,
+        soaBatchSettings
+      );
+      const { id, created_at, updated_at, ...settings } = saved;
+      setSoaBatchSettingsId(id);
+      setSoaBatchSettings(settings);
+      setShowSoaBatchSettingsModal(false);
+      alert('SOA batch settings saved successfully.');
+    } catch (error: any) {
+      alert(`Error saving SOA batch settings: ${error.message}`);
+    }
+  };
+
+  const toggleSoaTransaction = (transactionId: string) => {
+    setSelectedSoaTransactionIds((current) =>
+      current.includes(transactionId)
+        ? current.filter((id) => id !== transactionId)
+        : [...current, transactionId]
+    );
+  };
+
+  const selectAllSoaCandidates = () => {
+    setSelectedSoaTransactionIds(soaBatchCandidates.map((item) => item.id));
+  };
+
+  const clearSoaSelection = () => {
+    setSelectedSoaTransactionIds([]);
+  };
+
+  const previewSoaBatch = () => {
+    if (selectedSoaTransactions.length === 0) {
+      alert('Please select at least one government transaction.');
+      return;
+    }
+
+    setSoaBatchPreviewRows(selectedSoaTransactions);
+    setShowSoaBatchPreview(true);
+  };
+
+  const saveSoaBatch = async () => {
+    if (selectedSoaTransactions.length === 0) {
+      alert('Please select at least one government transaction.');
+      return;
+    }
+
+    const totalAmount = selectedSoaTransactions.reduce(
+      (sum, transaction) =>
+        sum + Number(transaction.computed_fee || transaction.approved_amount || 0),
+      0
+    );
+    const agency = lguAgencies.find(
+      (item) => item.id === soaBatchFilter.lgu_agency_id
+    );
+    const fallbackBatchName = `${new Date().toLocaleDateString()} SOA Batch`;
+
+    await governmentTransactionService.createSoaBatch({
+      batch_name: soaBatchFilter.batch_name || fallbackBatchName,
+      lgu_agency_id: soaBatchFilter.lgu_agency_id || null,
+      lgu_name: agency?.name || '',
+      date_from: soaBatchFilter.date_from || null,
+      date_to: soaBatchFilter.date_to || null,
+      prepared_by_name: soaBatchSettings.default_prepared_by_name,
+      prepared_by_title: soaBatchSettings.default_prepared_by_title,
+      received_by_label: soaBatchSettings.default_received_by_label,
+      total_amount: totalAmount,
+      transaction_ids: selectedSoaTransactions.map((transaction) => transaction.id)
+    });
+
+    alert('SOA batch saved successfully.');
+    await loadMasterData();
+  };
+
+  const printSoaBatch = () => {
+    window.print();
+  };
+
   const previewDocuments = (transaction: GovernmentTransaction) => {
     setDocumentPreviewTransaction(transaction);
     setShowDocumentPreview(true);
@@ -776,6 +942,21 @@ export const GovernmentTransactions: React.FC = () => {
           onPreviewDocuments={previewDocuments}
         />
       </div>
+
+      <SoaBatchPanel
+        filter={soaBatchFilter}
+        onFilterChange={setSoaBatchFilter}
+        agencies={lguAgencies}
+        candidates={soaBatchCandidates}
+        selectedIds={selectedSoaTransactionIds}
+        batches={soaBatches}
+        onToggle={toggleSoaTransaction}
+        onSelectAll={selectAllSoaCandidates}
+        onClear={clearSoaSelection}
+        onPreview={previewSoaBatch}
+        onSave={saveSoaBatch}
+        onOpenSettings={() => setShowSoaBatchSettingsModal(true)}
+      />
 
       <Modal
         isOpen={showForm}
@@ -1573,6 +1754,58 @@ export const GovernmentTransactions: React.FC = () => {
       </Modal>
 
       <Modal
+        isOpen={showSoaBatchSettingsModal}
+        onClose={() => setShowSoaBatchSettingsModal(false)}
+        title="SOA Batch Settings"
+        size="lg"
+      >
+        <SoaBatchSettingsForm
+          settings={soaBatchSettings}
+          onChange={setSoaBatchSettings}
+          onSave={saveSoaBatchSettings}
+          onCancel={() => setShowSoaBatchSettingsModal(false)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={showSoaBatchPreview}
+        onClose={() => setShowSoaBatchPreview(false)}
+        title="SOA Batch Preview"
+        size="xl"
+      >
+        <div className="space-y-4">
+          <style>
+            {`
+              @media print {
+                body * { visibility: hidden !important; }
+                #government-soa-batch, #government-soa-batch * { visibility: visible !important; }
+                #government-soa-batch {
+                  position: absolute;
+                  inset: 0;
+                  width: 100%;
+                  background: white;
+                }
+              }
+            `}
+          </style>
+          <div className="flex justify-end gap-2 print:hidden">
+            <Button type="button" variant="outline" onClick={saveSoaBatch}>
+              Save Batch
+            </Button>
+            <Button type="button" onClick={printSoaBatch}>
+              <Printer className="mr-2 h-4 w-4" />
+              Print / Save PDF
+            </Button>
+          </div>
+          <SoaBatchPreview
+            rows={soaBatchPreviewRows}
+            batchName={soaBatchFilter.batch_name || 'Statement of Accounts'}
+            settings={soaBatchSettings}
+          />
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={showDocumentPreview}
         onClose={() => setShowDocumentPreview(false)}
         title="Endorsement & Costing Preview"
@@ -1930,6 +2163,388 @@ const SupportDocumentPanel: React.FC<{
       </div>
     </div>
   );
+};
+
+const SoaBatchPanel: React.FC<{
+  filter: {
+    batch_name: string;
+    lgu_agency_id: string;
+    date_from: string;
+    date_to: string;
+  };
+  onFilterChange: (filter: {
+    batch_name: string;
+    lgu_agency_id: string;
+    date_from: string;
+    date_to: string;
+  }) => void;
+  agencies: GovernmentMasterRecord[];
+  candidates: GovernmentTransaction[];
+  selectedIds: string[];
+  batches: GovernmentSoaBatch[];
+  onToggle: (transactionId: string) => void;
+  onSelectAll: () => void;
+  onClear: () => void;
+  onPreview: () => void;
+  onSave: () => void;
+  onOpenSettings: () => void;
+}> = ({
+  filter,
+  onFilterChange,
+  agencies,
+  candidates,
+  selectedIds,
+  batches,
+  onToggle,
+  onSelectAll,
+  onClear,
+  onPreview,
+  onSave,
+  onOpenSettings
+}) => {
+  const selectedTotal = candidates
+    .filter((transaction) => selectedIds.includes(transaction.id))
+    .reduce(
+      (sum, transaction) =>
+        sum + Number(transaction.computed_fee || transaction.approved_amount || 0),
+      0
+    );
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h3 className="text-lg font-semibold text-slate-900">
+            SOA Batch Generation
+          </h3>
+          <p className="mt-1 text-sm text-slate-500">
+            Select multiple completed government transactions and generate a
+            batch Statement of Accounts list.
+          </p>
+        </div>
+        <Button type="button" variant="outline" onClick={onOpenSettings}>
+          <SettingsIcon className="mr-2 h-4 w-4" />
+          SOA Settings
+        </Button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
+        <Input
+          label="Batch Name"
+          placeholder="Example: 5th Batch"
+          value={filter.batch_name}
+          onChange={(event) =>
+            onFilterChange({ ...filter, batch_name: event.target.value })
+          }
+        />
+        <Select
+          label="LGU / Agency"
+          value={filter.lgu_agency_id}
+          onChange={(event) =>
+            onFilterChange({ ...filter, lgu_agency_id: event.target.value })
+          }
+          options={[
+            { value: '', label: 'All agencies' },
+            ...agencies.map((agency) => ({
+              value: agency.id,
+              label: agency.name
+            }))
+          ]}
+        />
+        <Input
+          label="Date From"
+          type="date"
+          value={filter.date_from}
+          onChange={(event) =>
+            onFilterChange({ ...filter, date_from: event.target.value })
+          }
+        />
+        <Input
+          label="Date To"
+          type="date"
+          value={filter.date_to}
+          onChange={(event) =>
+            onFilterChange({ ...filter, date_to: event.target.value })
+          }
+        />
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm text-slate-600">
+          Selected: <strong>{selectedIds.length}</strong> | Total:{' '}
+          <strong>{formatAmount(selectedTotal)}</strong>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={onSelectAll}>
+            Select All
+          </Button>
+          <Button type="button" variant="outline" onClick={onClear}>
+            Clear
+          </Button>
+          <Button type="button" variant="outline" onClick={onSave}>
+            Save Batch
+          </Button>
+          <Button type="button" onClick={onPreview}>
+            Preview Batch SOA
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full min-w-[920px]">
+          <thead className="bg-slate-50">
+            <tr>
+              <th className="px-3 py-2 text-left text-sm text-slate-600">
+                Select
+              </th>
+              <th className="px-3 py-2 text-left text-sm text-slate-600">
+                Schedule
+              </th>
+              <th className="px-3 py-2 text-left text-sm text-slate-600">
+                SOA / Charge No.
+              </th>
+              <th className="px-3 py-2 text-left text-sm text-slate-600">
+                Client
+              </th>
+              <th className="px-3 py-2 text-left text-sm text-slate-600">
+                Service
+              </th>
+              <th className="px-3 py-2 text-left text-sm text-slate-600">
+                Control No.
+              </th>
+              <th className="px-3 py-2 text-right text-sm text-slate-600">
+                Amount
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {candidates.map((transaction) => (
+              <tr key={transaction.id} className="border-t border-slate-100">
+                <td className="px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(transaction.id)}
+                    onChange={() => onToggle(transaction.id)}
+                  />
+                </td>
+                <td className="px-3 py-2 text-sm text-slate-600">
+                  {formatSoaSchedule(transaction)}
+                </td>
+                <td className="px-3 py-2 text-sm text-slate-600">
+                  {transaction.soa_number || '-'}
+                </td>
+                <td className="px-3 py-2 text-sm font-medium text-slate-900">
+                  {transaction.client_name}
+                </td>
+                <td className="px-3 py-2 text-sm text-slate-600">
+                  {formatSoaServices(transaction)}
+                </td>
+                <td className="px-3 py-2 text-sm text-slate-600">
+                  {transaction.reference_number}
+                </td>
+                <td className="px-3 py-2 text-right text-sm text-slate-900">
+                  {formatAmount(transaction.computed_fee || transaction.approved_amount)}
+                </td>
+              </tr>
+            ))}
+
+            {candidates.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">
+                  No eligible transactions found.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {batches.length > 0 && (
+        <div className="mt-5">
+          <h4 className="text-sm font-semibold text-slate-900">
+            Saved Batches
+          </h4>
+          <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {batches.slice(0, 6).map((batch) => (
+              <div
+                key={batch.id}
+                className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm"
+              >
+                <p className="font-medium text-slate-900">{batch.batch_name}</p>
+                <p className="text-slate-500">
+                  {batch.lgu_name || 'All agencies'} |{' '}
+                  {formatAmount(batch.total_amount)}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {new Date(batch.created_at).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
+  );
+};
+
+const SoaBatchSettingsForm: React.FC<{
+  settings: GovernmentSoaBatchSettingsInput;
+  onChange: (settings: GovernmentSoaBatchSettingsInput) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}> = ({ settings, onChange, onSave, onCancel }) => (
+  <div className="space-y-4">
+    <Input
+      label="Prepared By"
+      value={settings.default_prepared_by_name}
+      onChange={(event) =>
+        onChange({ ...settings, default_prepared_by_name: event.target.value })
+      }
+    />
+    <Input
+      label="Prepared By Title"
+      value={settings.default_prepared_by_title}
+      onChange={(event) =>
+        onChange({ ...settings, default_prepared_by_title: event.target.value })
+      }
+    />
+    <Input
+      label="Received By Label"
+      value={settings.default_received_by_label}
+      onChange={(event) =>
+        onChange({ ...settings, default_received_by_label: event.target.value })
+      }
+    />
+    <div className="flex justify-end gap-2">
+      <Button type="button" variant="outline" onClick={onCancel}>
+        Cancel
+      </Button>
+      <Button type="button" onClick={onSave}>
+        Save SOA Settings
+      </Button>
+    </div>
+  </div>
+);
+
+const SoaBatchPreview: React.FC<{
+  rows: GovernmentTransaction[];
+  batchName: string;
+  settings: GovernmentSoaBatchSettingsInput;
+}> = ({ rows, batchName, settings }) => {
+  const total = rows.reduce(
+    (sum, transaction) =>
+      sum + Number(transaction.computed_fee || transaction.approved_amount || 0),
+    0
+  );
+
+  return (
+    <section
+      id="government-soa-batch"
+      className="mx-auto min-h-[760px] max-w-[1056px] rounded-lg border border-slate-200 bg-white p-8 shadow-sm print:min-h-screen print:max-w-none print:rounded-none print:border-0 print:shadow-none"
+    >
+      <h2 className="text-center text-2xl font-semibold">
+        Statement of Accounts
+      </h2>
+      <p className="text-center text-lg">({batchName})</p>
+
+      <table className="mt-8 w-full border-collapse text-sm">
+        <thead>
+          <tr className="bg-slate-100">
+            <th className="border border-slate-300 px-2 py-2 text-left">
+              Date Scheduled
+            </th>
+            <th className="border border-slate-300 px-2 py-2 text-left">
+              Billing Statement No. Invoice/Charge No.
+            </th>
+            <th className="border border-slate-300 px-2 py-2 text-left">
+              Name of Client
+            </th>
+            <th className="border border-slate-300 px-2 py-2 text-left">
+              Service Provided
+            </th>
+            <th className="border border-slate-300 px-2 py-2 text-left">
+              Control Number
+            </th>
+            <th className="border border-slate-300 px-2 py-2 text-right">
+              Amount Due
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((transaction) => (
+            <tr key={transaction.id}>
+              <td className="border border-slate-300 px-2 py-2">
+                {formatSoaSchedule(transaction)}
+              </td>
+              <td className="border border-slate-300 px-2 py-2">
+                {transaction.soa_number || '-'}
+              </td>
+              <td className="border border-slate-300 px-2 py-2">
+                {transaction.client_name}
+              </td>
+              <td className="border border-slate-300 px-2 py-2">
+                {formatSoaServices(transaction)}
+              </td>
+              <td className="border border-slate-300 px-2 py-2">
+                {transaction.reference_number}
+              </td>
+              <td className="border border-slate-300 px-2 py-2 text-right">
+                {formatAmount(transaction.computed_fee || transaction.approved_amount)}
+              </td>
+            </tr>
+          ))}
+          <tr>
+            <td
+              colSpan={5}
+              className="border border-slate-300 px-2 py-2 text-right font-semibold"
+            >
+              TOTAL:
+            </td>
+            <td className="border border-slate-300 px-2 py-2 text-right font-semibold">
+              {formatAmount(total)}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="mt-12 grid grid-cols-2 gap-12 text-sm">
+        <div>
+          <p>Prepared by:</p>
+          <div className="mt-10">
+            <p className="font-semibold">
+              {settings.default_prepared_by_name || '-'}
+            </p>
+            <p>{settings.default_prepared_by_title || '-'}</p>
+          </div>
+        </div>
+        <div>
+          <p>Received by:</p>
+          <div className="mt-10 border-t border-slate-500 pt-2 text-center">
+            <p>{settings.default_received_by_label || '-'}</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+};
+
+const formatSoaSchedule = (transaction: GovernmentTransaction) =>
+  [
+    toInputDate(transaction.schedule_date),
+    toInputDate(transaction.service_completed_date)
+  ]
+    .filter(Boolean)
+    .map((date) => formatDate(date))
+    .join(' / ') || '-';
+
+const formatSoaServices = (transaction: GovernmentTransaction) => {
+  const services = transaction.items?.length
+    ? transaction.items.map((item) => item.service_name)
+    : transaction.selected_tests
+      ? [transaction.selected_tests]
+      : [];
+
+  return services.map((service) => `- ${service}`).join(', ') || '-';
 };
 
 const GovernmentDocumentPreview: React.FC<{

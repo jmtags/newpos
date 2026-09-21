@@ -132,6 +132,36 @@ export interface GovernmentSupportDocument {
   created_at: string;
 }
 
+export interface GovernmentSoaBatchSettings {
+  id: string;
+  default_prepared_by_name: string;
+  default_prepared_by_title: string;
+  default_received_by_label: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type GovernmentSoaBatchSettingsInput = Omit<
+  GovernmentSoaBatchSettings,
+  'id' | 'created_at' | 'updated_at'
+>;
+
+export interface GovernmentSoaBatch {
+  id: string;
+  batch_name: string;
+  lgu_agency_id: string | null;
+  lgu_name: string;
+  date_from: string | null;
+  date_to: string | null;
+  prepared_by_name: string;
+  prepared_by_title: string;
+  received_by_label: string;
+  total_amount: number;
+  transaction_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
 const storageKey = 'psyzygy_government_transactions';
 const supportDocumentBucket = 'government-documents';
 
@@ -177,6 +207,15 @@ const isGovernmentDocumentsSchemaError = (error: any) => {
     error?.code === '42P01'
     || message.includes('government_transaction_documents')
     || message.includes('government-documents')
+  );
+};
+
+const isSoaBatchSchemaError = (error: any) => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.code === '42P01'
+    || message.includes('government_soa_batches')
+    || message.includes('government_soa_batch_settings')
   );
 };
 
@@ -657,5 +696,69 @@ export const governmentTransactionService = {
     await supabase.storage
       .from(supportDocumentBucket)
       .remove([document.file_path]);
+  },
+
+  async getSoaBatchSettings() {
+    const { data, error } = await supabase
+      .from('government_soa_batch_settings')
+      .select('*')
+      .limit(1)
+      .maybeSingle();
+
+    if (error && isSoaBatchSchemaError(error)) return null;
+    if (error) throw error;
+    return data as GovernmentSoaBatchSettings | null;
+  },
+
+  async saveSoaBatchSettings(
+    id: string | undefined,
+    settings: GovernmentSoaBatchSettingsInput
+  ) {
+    if (id) {
+      const { data, error } = await supabase
+        .from('government_soa_batch_settings')
+        .update(settings)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as GovernmentSoaBatchSettings;
+    }
+
+    const { data, error } = await supabase
+      .from('government_soa_batch_settings')
+      .insert(settings)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data as GovernmentSoaBatchSettings;
+  },
+
+  async listSoaBatches() {
+    const { data, error } = await supabase
+      .from('government_soa_batches')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error && isSoaBatchSchemaError(error)) return [];
+    if (error) throw error;
+    return (data || []) as GovernmentSoaBatch[];
+  },
+
+  async createSoaBatch(input: Omit<GovernmentSoaBatch, 'id' | 'created_at' | 'updated_at'>) {
+    const { data, error } = await supabase
+      .from('government_soa_batches')
+      .insert({
+        ...input,
+        date_from: input.date_from || null,
+        date_to: input.date_to || null
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data as GovernmentSoaBatch;
   }
 };
