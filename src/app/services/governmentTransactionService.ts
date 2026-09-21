@@ -116,6 +116,15 @@ const isMissingTableError = (error: any) =>
   error?.code === '42P01'
   || String(error?.message || '').toLowerCase().includes('government_transactions');
 
+const isGovernmentItemsSchemaError = (error: any) => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.code === '42P01'
+    || error?.code === 'PGRST200'
+    || message.includes('government_transaction_items')
+  );
+};
+
 const dateFields = [
   'referral_date',
   'guarantee_letter_date',
@@ -185,6 +194,41 @@ const normalizeFromDatabase = (transaction: any): GovernmentTransaction => {
   } as GovernmentTransaction;
 };
 
+const listItemsForTransactionIds = async (transactionIds: string[]) => {
+  if (transactionIds.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('government_transaction_items')
+    .select('*')
+    .in('government_transaction_id', transactionIds)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true });
+
+  if (error && isGovernmentItemsSchemaError(error)) return [];
+  if (error) throw error;
+  return data || [];
+};
+
+const attachItemsToTransactions = async (transactions: any[]) => {
+  const items = await listItemsForTransactionIds(
+    transactions.map((transaction) => transaction.id)
+  );
+
+  const itemsByTransactionId = new Map<string, any[]>();
+  items.forEach((item: any) => {
+    const existing = itemsByTransactionId.get(item.government_transaction_id) || [];
+    existing.push(item);
+    itemsByTransactionId.set(item.government_transaction_id, existing);
+  });
+
+  return transactions.map((transaction) =>
+    normalizeFromDatabase({
+      ...transaction,
+      items: itemsByTransactionId.get(transaction.id) || []
+    })
+  );
+};
+
 const saveTransactionItems = async (
   transactionId: string,
   items: GovernmentTransactionItem[] = []
@@ -220,12 +264,13 @@ const saveTransactionItems = async (
 const getTransactionWithItems = async (id: string) => {
   const { data, error } = await supabase
     .from('government_transactions')
-    .select('*, government_transaction_items(*)')
+    .select('*')
     .eq('id', id)
     .single();
 
   if (error) throw error;
-  return normalizeFromDatabase(data);
+  const [transaction] = await attachItemsToTransactions([data]);
+  return transaction;
 };
 
 const listMasterRecords = async (table: string) => {
@@ -279,10 +324,10 @@ export const governmentTransactionService = {
   async listTransactions() {
     const { data, error } = await supabase
       .from('government_transactions')
-      .select('*, government_transaction_items(*)')
+      .select('*')
       .order('updated_at', { ascending: false });
 
-    if (!error) return (data || []).map(normalizeFromDatabase);
+    if (!error) return attachItemsToTransactions(data || []);
     if (isMissingTableError(error)) return sortTransactions(readStoredTransactions());
     throw error;
   },
