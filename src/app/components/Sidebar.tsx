@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ClipboardList,
   DoorOpen,
+  Landmark,
   LayoutDashboard,
   LogOut,
   Plus,
@@ -55,6 +56,7 @@ const menuItems: NavigationItem[] = [
   { id: 'services', label: 'Services', icon: Briefcase },
   { id: 'associates', label: 'Associate/s', icon: UserRoundCheck },
   { id: 'referrals', label: 'Referrals', icon: Share2 },
+  { id: 'governmentTransactions', label: 'Government Mode', icon: Landmark },
   { id: 'users', label: 'User Management', icon: UserCog },
   { id: 'reports', label: 'Reports', icon: BarChart3 },
   { id: 'settings', label: 'Settings', icon: Settings }
@@ -83,7 +85,13 @@ const groupDefinitions = [
   },
   {
     label: 'Operations',
-    ids: ['transactions', 'services', 'associates', 'referrals']
+    ids: [
+      'transactions',
+      'services',
+      'associates',
+      'referrals',
+      'governmentTransactions'
+    ]
   },
   {
     label: 'Analytics',
@@ -103,6 +111,7 @@ const iconTileClasses: Record<string, string> = {
   services: 'bg-sky-100 text-sky-700',
   associates: 'bg-cyan-100 text-cyan-700',
   referrals: 'bg-amber-100 text-amber-700',
+  governmentTransactions: 'bg-emerald-100 text-emerald-700',
   reports: 'bg-teal-100 text-teal-700',
   scheduleCalendar: 'bg-blue-100 text-blue-700',
   appointments: 'bg-purple-100 text-purple-700',

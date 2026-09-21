@@ -4,6 +4,7 @@ import {
   ChevronDown,
   FolderKanban,
   KeyRound,
+  Landmark,
   LogOut,
   Menu,
   User
@@ -131,6 +132,27 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <FolderKanban className="w-4 h-4" />
                   <span>Open Case Management</span>
+                </button>
+              )}
+
+              {['admin', 'manager', 'regular_user'].includes(
+                currentUser?.role || ''
+              ) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    window.dispatchEvent(
+                      new CustomEvent('psyzygy:navigate', {
+                        detail: { page: 'governmentTransactions' }
+                      })
+                    );
+                  }}
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left text-sm text-slate-700 hover:bg-slate-50 transition-colors"
+                  role="menuitem"
+                >
+                  <Landmark className="w-4 h-4" />
+                  <span>Open Government Mode</span>
                 </button>
               )}
 

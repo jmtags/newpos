@@ -48,6 +48,7 @@ export const canAccessPage = (role: UserRole | undefined, page: string) => {
       'services',
       'associates',
       'referrals',
+      'governmentTransactions',
       'reports',
       'scheduleCalendar',
       'appointments',

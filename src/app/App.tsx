@@ -28,6 +28,7 @@ import { CaseManagementLogin } from './pages/CaseManagementLogin';
 import { CaseWorkspace } from './components/CaseWorkspace';
 import { Expenses } from './pages/Expenses';
 import { Profitability } from './pages/Profitability';
+import { GovernmentTransactions } from './pages/GovernmentTransactions';
 import {
   canAccessPage,
   caseModuleRoles,
@@ -166,6 +167,20 @@ export default function App() {
   }, [currentUser, isCaseManagementRoute, isLoggedIn]);
 
   useEffect(() => {
+    const handleExternalNavigation = (event: Event) => {
+      const page = (event as CustomEvent<{ page?: string }>).detail?.page;
+      if (page) {
+        handlePageChange(page);
+      }
+    };
+
+    window.addEventListener('psyzygy:navigate', handleExternalNavigation);
+    return () => {
+      window.removeEventListener('psyzygy:navigate', handleExternalNavigation);
+    };
+  }, []);
+
+  useEffect(() => {
     if (
       isCaseManagementRoute
       && !checkingSession
@@ -271,6 +286,7 @@ export default function App() {
       services: 'Services Management',
       associates: 'Associate/s',
       referrals: 'Referrals',
+      governmentTransactions: 'Government Transaction Mode',
       users: 'User Management',
       reports: 'Reports',
       settings: 'Settings',
@@ -318,6 +334,9 @@ export default function App() {
 
       case 'referrals':
         return <Referrals />;
+
+      case 'governmentTransactions':
+        return <GovernmentTransactions />;
 
       case 'users':
         return <UserManagement />;
