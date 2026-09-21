@@ -760,5 +760,33 @@ export const governmentTransactionService = {
 
     if (error) throw error;
     return data as GovernmentSoaBatch;
+  },
+
+  async updateSoaBatch(
+    id: string,
+    input: Omit<GovernmentSoaBatch, 'id' | 'created_at' | 'updated_at'>
+  ) {
+    const { data, error } = await supabase
+      .from('government_soa_batches')
+      .update({
+        ...input,
+        date_from: input.date_from || null,
+        date_to: input.date_to || null
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data as GovernmentSoaBatch;
+  },
+
+  async deleteSoaBatch(id: string) {
+    const { error } = await supabase
+      .from('government_soa_batches')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
   }
 };

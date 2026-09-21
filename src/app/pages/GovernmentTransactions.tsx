@@ -186,6 +186,10 @@ export const GovernmentTransactions: React.FC = () => {
   const [showSoaBatchSettingsModal, setShowSoaBatchSettingsModal] = useState(false);
   const [showSoaBatchPreview, setShowSoaBatchPreview] = useState(false);
   const [soaBatchPreviewRows, setSoaBatchPreviewRows] = useState<GovernmentTransaction[]>([]);
+  const [soaBatchPreviewName, setSoaBatchPreviewName] = useState('Statement of Accounts');
+  const [soaBatchPreviewSettings, setSoaBatchPreviewSettings] =
+    useState<GovernmentSoaBatchSettingsInput>(createDefaultSoaBatchSettings);
+  const [editingSoaBatch, setEditingSoaBatch] = useState<GovernmentSoaBatch | null>(null);
   const [selectedTransaction, setSelectedTransaction] =
     useState<GovernmentTransaction | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -403,7 +407,15 @@ export const GovernmentTransactions: React.FC = () => {
   }, [transactions]);
 
   const soaBatchCandidates = useMemo(() => {
+    const assignedTransactionIds = new Set(
+      soaBatches
+        .filter((batch) => batch.id !== editingSoaBatch?.id)
+        .flatMap((batch) => batch.transaction_ids || [])
+    );
+
     return transactions.filter((transaction) => {
+      if (assignedTransactionIds.has(transaction.id)) return false;
+
       const statusAllowed = [
         'service_completed',
         'soa_submitted',
@@ -434,7 +446,7 @@ export const GovernmentTransactions: React.FC = () => {
 
       return true;
     });
-  }, [soaBatchFilter, transactions]);
+  }, [editingSoaBatch?.id, soaBatchFilter, soaBatches, transactions]);
 
   const selectedSoaTransactions = useMemo(
     () =>
@@ -703,7 +715,26 @@ export const GovernmentTransactions: React.FC = () => {
 
   const clearSoaSelection = () => {
     setSelectedSoaTransactionIds([]);
+    setEditingSoaBatch(null);
   };
+
+  const getTransactionsForSoaBatch = (batch: GovernmentSoaBatch) => {
+    const transactionMap = new Map(
+      transactions.map((transaction) => [transaction.id, transaction])
+    );
+
+    return (batch.transaction_ids || [])
+      .map((transactionId) => transactionMap.get(transactionId))
+      .filter(Boolean) as GovernmentTransaction[];
+  };
+
+  const getSoaBatchSettingsForPreview = (
+    batch: GovernmentSoaBatch
+  ): GovernmentSoaBatchSettingsInput => ({
+    default_prepared_by_name: batch.prepared_by_name || '',
+    default_prepared_by_title: batch.prepared_by_title || '',
+    default_received_by_label: batch.received_by_label || ''
+  });
 
   const previewSoaBatch = () => {
     if (selectedSoaTransactions.length === 0) {
@@ -712,12 +743,74 @@ export const GovernmentTransactions: React.FC = () => {
     }
 
     setSoaBatchPreviewRows(selectedSoaTransactions);
+    setSoaBatchPreviewName(soaBatchFilter.batch_name || 'Statement of Accounts');
+    setSoaBatchPreviewSettings(soaBatchSettings);
     setShowSoaBatchPreview(true);
+  };
+
+  const previewSavedSoaBatch = (batch: GovernmentSoaBatch) => {
+    const batchRows = getTransactionsForSoaBatch(batch);
+
+    if (batchRows.length === 0) {
+      alert('The transactions linked to this batch are no longer available.');
+      return;
+    }
+
+    setSoaBatchPreviewRows(batchRows);
+    setSoaBatchPreviewName(batch.batch_name || 'Statement of Accounts');
+    setSoaBatchPreviewSettings(getSoaBatchSettingsForPreview(batch));
+    setShowSoaBatchPreview(true);
+  };
+
+  const editSavedSoaBatch = (batch: GovernmentSoaBatch) => {
+    setEditingSoaBatch(batch);
+    setSoaBatchFilter({
+      batch_name: batch.batch_name || '',
+      lgu_agency_id: batch.lgu_agency_id || '',
+      date_from: batch.date_from || '',
+      date_to: batch.date_to || ''
+    });
+    setSelectedSoaTransactionIds(batch.transaction_ids || []);
+  };
+
+  const deleteSavedSoaBatch = async (batch: GovernmentSoaBatch) => {
+    const confirmed = window.confirm(
+      `Delete SOA batch "${batch.batch_name}"? The transactions will become eligible for a new batch again.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await governmentTransactionService.deleteSoaBatch(batch.id);
+      if (editingSoaBatch?.id === batch.id) {
+        setEditingSoaBatch(null);
+        setSelectedSoaTransactionIds([]);
+      }
+      await loadMasterData();
+      alert('SOA batch deleted successfully.');
+    } catch (error: any) {
+      alert(`Error deleting SOA batch: ${error.message}`);
+    }
   };
 
   const saveSoaBatch = async () => {
     if (selectedSoaTransactions.length === 0) {
       alert('Please select at least one government transaction.');
+      return;
+    }
+
+    const selectedIds = selectedSoaTransactions.map((transaction) => transaction.id);
+    const duplicateBatch = soaBatches.find((batch) =>
+      batch.id !== editingSoaBatch?.id
+      && (batch.transaction_ids || []).some((transactionId) =>
+        selectedIds.includes(transactionId)
+      )
+    );
+
+    if (duplicateBatch) {
+      alert(
+        `One or more selected transactions already belong to SOA batch "${duplicateBatch.batch_name}". Please clear them before saving.`
+      );
       return;
     }
 
@@ -731,7 +824,7 @@ export const GovernmentTransactions: React.FC = () => {
     );
     const fallbackBatchName = `${new Date().toLocaleDateString()} SOA Batch`;
 
-    await governmentTransactionService.createSoaBatch({
+    const batchInput = {
       batch_name: soaBatchFilter.batch_name || fallbackBatchName,
       lgu_agency_id: soaBatchFilter.lgu_agency_id || null,
       lgu_name: agency?.name || '',
@@ -741,10 +834,24 @@ export const GovernmentTransactions: React.FC = () => {
       prepared_by_title: soaBatchSettings.default_prepared_by_title,
       received_by_label: soaBatchSettings.default_received_by_label,
       total_amount: totalAmount,
-      transaction_ids: selectedSoaTransactions.map((transaction) => transaction.id)
-    });
+      transaction_ids: selectedIds
+    };
 
-    alert('SOA batch saved successfully.');
+    if (editingSoaBatch) {
+      await governmentTransactionService.updateSoaBatch(
+        editingSoaBatch.id,
+        batchInput
+      );
+    } else {
+      await governmentTransactionService.createSoaBatch(batchInput);
+    }
+
+    alert(
+      editingSoaBatch
+        ? 'SOA batch updated successfully.'
+        : 'SOA batch saved successfully.'
+    );
+    setEditingSoaBatch(null);
     await loadMasterData();
   };
 
@@ -950,11 +1057,15 @@ export const GovernmentTransactions: React.FC = () => {
         candidates={soaBatchCandidates}
         selectedIds={selectedSoaTransactionIds}
         batches={soaBatches}
+        editingBatchId={editingSoaBatch?.id || ''}
         onToggle={toggleSoaTransaction}
         onSelectAll={selectAllSoaCandidates}
         onClear={clearSoaSelection}
         onPreview={previewSoaBatch}
         onSave={saveSoaBatch}
+        onPreviewBatch={previewSavedSoaBatch}
+        onEditBatch={editSavedSoaBatch}
+        onDeleteBatch={deleteSavedSoaBatch}
         onOpenSettings={() => setShowSoaBatchSettingsModal(true)}
       />
 
@@ -1790,7 +1901,7 @@ export const GovernmentTransactions: React.FC = () => {
           </style>
           <div className="flex justify-end gap-2 print:hidden">
             <Button type="button" variant="outline" onClick={saveSoaBatch}>
-              Save Batch
+              {editingSoaBatch ? 'Update Batch' : 'Save Batch'}
             </Button>
             <Button type="button" onClick={printSoaBatch}>
               <Printer className="mr-2 h-4 w-4" />
@@ -1799,8 +1910,8 @@ export const GovernmentTransactions: React.FC = () => {
           </div>
           <SoaBatchPreview
             rows={soaBatchPreviewRows}
-            batchName={soaBatchFilter.batch_name || 'Statement of Accounts'}
-            settings={soaBatchSettings}
+            batchName={soaBatchPreviewName}
+            settings={soaBatchPreviewSettings}
           />
         </div>
       </Modal>
@@ -2182,11 +2293,15 @@ const SoaBatchPanel: React.FC<{
   candidates: GovernmentTransaction[];
   selectedIds: string[];
   batches: GovernmentSoaBatch[];
+  editingBatchId: string;
   onToggle: (transactionId: string) => void;
   onSelectAll: () => void;
   onClear: () => void;
   onPreview: () => void;
   onSave: () => void;
+  onPreviewBatch: (batch: GovernmentSoaBatch) => void;
+  onEditBatch: (batch: GovernmentSoaBatch) => void;
+  onDeleteBatch: (batch: GovernmentSoaBatch) => void;
   onOpenSettings: () => void;
 }> = ({
   filter,
@@ -2195,11 +2310,15 @@ const SoaBatchPanel: React.FC<{
   candidates,
   selectedIds,
   batches,
+  editingBatchId,
   onToggle,
   onSelectAll,
   onClear,
   onPreview,
   onSave,
+  onPreviewBatch,
+  onEditBatch,
+  onDeleteBatch,
   onOpenSettings
 }) => {
   const selectedTotal = candidates
@@ -2273,6 +2392,11 @@ const SoaBatchPanel: React.FC<{
         <div className="text-sm text-slate-600">
           Selected: <strong>{selectedIds.length}</strong> | Total:{' '}
           <strong>{formatAmount(selectedTotal)}</strong>
+          {editingBatchId && (
+            <span className="ml-3 rounded-full bg-amber-100 px-2 py-1 text-xs font-medium text-amber-800">
+              Editing saved batch
+            </span>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" onClick={onSelectAll}>
@@ -2282,7 +2406,7 @@ const SoaBatchPanel: React.FC<{
             Clear
           </Button>
           <Button type="button" variant="outline" onClick={onSave}>
-            Save Batch
+            {editingBatchId ? 'Update Batch' : 'Save Batch'}
           </Button>
           <Button type="button" onClick={onPreview}>
             Preview Batch SOA
@@ -2368,7 +2492,11 @@ const SoaBatchPanel: React.FC<{
             {batches.slice(0, 6).map((batch) => (
               <div
                 key={batch.id}
-                className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm"
+                className={`rounded-lg border p-3 text-sm ${
+                  editingBatchId === batch.id
+                    ? 'border-amber-300 bg-amber-50'
+                    : 'border-slate-200 bg-slate-50'
+                }`}
               >
                 <p className="font-medium text-slate-900">{batch.batch_name}</p>
                 <p className="text-slate-500">
@@ -2378,6 +2506,35 @@ const SoaBatchPanel: React.FC<{
                 <p className="text-xs text-slate-400">
                   {new Date(batch.created_at).toLocaleString()}
                 </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onPreviewBatch(batch)}
+                  >
+                    <FileText className="mr-1.5 h-4 w-4" />
+                    Preview
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => onEditBatch(batch)}
+                  >
+                    <Pencil className="mr-1.5 h-4 w-4" />
+                    Edit
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="danger"
+                    onClick={() => onDeleteBatch(batch)}
+                  >
+                    <Trash2 className="mr-1.5 h-4 w-4" />
+                    Delete
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
