@@ -113,7 +113,27 @@ export type GovernmentDocumentSettingsInput = Omit<
   'id' | 'created_at' | 'updated_at'
 >;
 
+export type GovernmentSupportDocumentType =
+  | 'referral_letter'
+  | 'guarantee_letter'
+  | 'soa_document'
+  | 'cheque_payment_proof'
+  | 'other_supporting_document';
+
+export interface GovernmentSupportDocument {
+  id: string;
+  government_transaction_id: string;
+  document_type: GovernmentSupportDocumentType;
+  file_name: string;
+  file_path: string;
+  mime_type: string;
+  file_size: number;
+  uploaded_by_user_id: string | null;
+  created_at: string;
+}
+
 const storageKey = 'psyzygy_government_transactions';
+const supportDocumentBucket = 'government-documents';
 
 const createReferenceNumber = () => {
   const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -148,6 +168,15 @@ const isGovernmentItemsSchemaError = (error: any) => {
     error?.code === '42P01'
     || error?.code === 'PGRST200'
     || message.includes('government_transaction_items')
+  );
+};
+
+const isGovernmentDocumentsSchemaError = (error: any) => {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.code === '42P01'
+    || message.includes('government_transaction_documents')
+    || message.includes('government-documents')
   );
 };
 
@@ -544,5 +573,89 @@ export const governmentTransactionService = {
 
     if (error) throw error;
     return data as GovernmentDocumentSettings;
+  },
+
+  async listSupportDocuments(transactionId: string) {
+    const { data, error } = await supabase
+      .from('government_transaction_documents')
+      .select('*')
+      .eq('government_transaction_id', transactionId)
+      .order('created_at', { ascending: false });
+
+    if (error && isGovernmentDocumentsSchemaError(error)) return [];
+    if (error) throw error;
+    return (data || []) as GovernmentSupportDocument[];
+  },
+
+  async uploadSupportDocument(
+    transactionId: string,
+    documentType: GovernmentSupportDocumentType,
+    file: File
+  ) {
+    const extension = file.name.split('.').pop()?.toLowerCase() || 'bin';
+    const safeExtension = [
+      'pdf',
+      'doc',
+      'docx',
+      'jpg',
+      'jpeg',
+      'png',
+      'webp'
+    ].includes(extension)
+      ? extension
+      : 'bin';
+    const path = `${transactionId}/${documentType}/${crypto.randomUUID()}.${safeExtension}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from(supportDocumentBucket)
+      .upload(path, file, {
+        cacheControl: '3600',
+        contentType: file.type,
+        upsert: false
+      });
+
+    if (uploadError) throw uploadError;
+
+    const { data, error } = await supabase
+      .from('government_transaction_documents')
+      .insert({
+        government_transaction_id: transactionId,
+        document_type: documentType,
+        file_name: file.name,
+        file_path: path,
+        mime_type: file.type || 'application/octet-stream',
+        file_size: file.size
+      })
+      .select()
+      .single();
+
+    if (error) {
+      await supabase.storage.from(supportDocumentBucket).remove([path]);
+      throw error;
+    }
+
+    return data as GovernmentSupportDocument;
+  },
+
+  async getSupportDocumentUrl(filePath: string) {
+    const { data, error } = await supabase.storage
+      .from(supportDocumentBucket)
+      .createSignedUrl(filePath, 60 * 60);
+
+    if (error) throw error;
+    return data.signedUrl;
+  },
+
+  async deleteSupportDocument(document: GovernmentSupportDocument) {
+    const { error } = await supabase
+      .from('government_transaction_documents')
+      .delete()
+      .eq('id', document.id);
+
+    if (error) throw error;
+
+    await supabase.storage
+      .from(supportDocumentBucket)
+      .remove([document.file_path]);
   }
 };

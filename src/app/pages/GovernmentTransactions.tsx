@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   ClipboardList,
+  Download,
   FileSignature,
   FileCheck2,
   FileText,
@@ -37,6 +38,8 @@ import {
   type GovernmentTransactionInput,
   type GovernmentTransactionItem,
   type GovernmentMasterRecord,
+  type GovernmentSupportDocument,
+  type GovernmentSupportDocumentType,
   type GovernmentSocialWorker,
   type GovernmentTransactionStatus
 } from '../services/governmentTransactionService';
@@ -181,6 +184,10 @@ export const GovernmentTransactions: React.FC = () => {
   const [showDocumentPreview, setShowDocumentPreview] = useState(false);
   const [documentPreviewTransaction, setDocumentPreviewTransaction] =
     useState<GovernmentTransaction | null>(null);
+  const [supportDocuments, setSupportDocuments] =
+    useState<GovernmentSupportDocument[]>([]);
+  const [uploadingDocumentType, setUploadingDocumentType] =
+    useState<GovernmentSupportDocumentType | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [newClient, setNewClient] = useState({
     client_code: '',
@@ -273,10 +280,25 @@ export const GovernmentTransactions: React.FC = () => {
     }
   };
 
+  const loadSupportDocuments = async (transactionId?: string) => {
+    if (!transactionId) {
+      setSupportDocuments([]);
+      return;
+    }
+
+    setSupportDocuments(
+      await governmentTransactionService.listSupportDocuments(transactionId)
+    );
+  };
+
   useEffect(() => {
     loadTransactions();
     loadMasterData();
   }, []);
+
+  useEffect(() => {
+    loadSupportDocuments(editingTransaction?.id);
+  }, [editingTransaction?.id]);
 
   const filteredTransactions = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -571,6 +593,49 @@ export const GovernmentTransactions: React.FC = () => {
 
   const printDocuments = () => {
     window.print();
+  };
+
+  const uploadSupportDocument = async (
+    documentType: GovernmentSupportDocumentType,
+    file?: File
+  ) => {
+    if (!editingTransaction?.id || !file) return;
+
+    try {
+      setUploadingDocumentType(documentType);
+      await governmentTransactionService.uploadSupportDocument(
+        editingTransaction.id,
+        documentType,
+        file
+      );
+      await loadSupportDocuments(editingTransaction.id);
+    } catch (error: any) {
+      alert(`Error uploading document: ${error.message}`);
+    } finally {
+      setUploadingDocumentType(null);
+    }
+  };
+
+  const openSupportDocument = async (document: GovernmentSupportDocument) => {
+    try {
+      const url = await governmentTransactionService.getSupportDocumentUrl(
+        document.file_path
+      );
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error: any) {
+      alert(`Error opening document: ${error.message}`);
+    }
+  };
+
+  const deleteSupportDocument = async (document: GovernmentSupportDocument) => {
+    if (!window.confirm(`Delete ${document.file_name}?`)) return;
+
+    try {
+      await governmentTransactionService.deleteSupportDocument(document);
+      await loadSupportDocuments(editingTransaction?.id);
+    } catch (error: any) {
+      alert(`Error deleting document: ${error.message}`);
+    }
   };
 
   const markEndorsementReady = async (transaction: GovernmentTransaction) => {
@@ -879,6 +944,18 @@ export const GovernmentTransactions: React.FC = () => {
                 </p>
               </div>
             )}
+
+            <SupportDocumentPanel
+              transactionId={editingTransaction?.id}
+              documentType="referral_letter"
+              title="Referral Letter"
+              description="Upload the CSWD/LGU referral letter received during intake."
+              documents={supportDocuments}
+              uploadingDocumentType={uploadingDocumentType}
+              onUpload={uploadSupportDocument}
+              onOpen={openSupportDocument}
+              onDelete={deleteSupportDocument}
+            />
           </FormSection>
 
           <FormSection icon={<FileCheck2 className="h-5 w-5 text-blue-600" />} title="Review, Tests, and Costing">
@@ -1038,6 +1115,18 @@ export const GovernmentTransactions: React.FC = () => {
               <Input label="Schedule Date" type="date" value={form.schedule_date} onChange={(event) => setForm({ ...form, schedule_date: event.target.value })} />
               <Input label="Service Completed Date" type="date" value={form.service_completed_date} onChange={(event) => setForm({ ...form, service_completed_date: event.target.value })} />
             </div>
+
+            <SupportDocumentPanel
+              transactionId={editingTransaction?.id}
+              documentType="guarantee_letter"
+              title="Guarantee Letter"
+              description="Upload the signed guarantee letter from the LGU or agency."
+              documents={supportDocuments}
+              uploadingDocumentType={uploadingDocumentType}
+              onUpload={uploadSupportDocument}
+              onOpen={openSupportDocument}
+              onDelete={deleteSupportDocument}
+            />
           </FormSection>
 
           <FormSection icon={<CalendarDays className="h-5 w-5 text-violet-600" />} title="SOA and Cheque Collection">
@@ -1048,6 +1137,31 @@ export const GovernmentTransactions: React.FC = () => {
               <Input label="Cheque Released Date" type="date" value={form.cheque_released_date} onChange={(event) => setForm({ ...form, cheque_released_date: event.target.value })} />
               <Input label="Payment Amount" type="number" value={form.payment_amount || ''} onChange={(event) => setForm({ ...form, payment_amount: parseFloat(event.target.value) || 0 })} />
               <Input label="Notes" value={form.notes} onChange={(event) => setForm({ ...form, notes: event.target.value })} />
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <SupportDocumentPanel
+                transactionId={editingTransaction?.id}
+                documentType="soa_document"
+                title="Statement of Account"
+                description="Upload the submitted SOA or billing document."
+                documents={supportDocuments}
+                uploadingDocumentType={uploadingDocumentType}
+                onUpload={uploadSupportDocument}
+                onOpen={openSupportDocument}
+                onDelete={deleteSupportDocument}
+              />
+              <SupportDocumentPanel
+                transactionId={editingTransaction?.id}
+                documentType="cheque_payment_proof"
+                title="Cheque / Payment Proof"
+                description="Upload cheque copy, deposit slip, or other payment proof."
+                documents={supportDocuments}
+                uploadingDocumentType={uploadingDocumentType}
+                onUpload={uploadSupportDocument}
+                onOpen={openSupportDocument}
+                onDelete={deleteSupportDocument}
+              />
             </div>
           </FormSection>
 
@@ -1705,6 +1819,114 @@ const DocumentSettingsForm: React.FC<{
         <Button type="button" onClick={onSave}>
           Save Document Settings
         </Button>
+      </div>
+    </div>
+  );
+};
+
+const SupportDocumentPanel: React.FC<{
+  transactionId?: string;
+  documentType: GovernmentSupportDocumentType;
+  title: string;
+  description: string;
+  documents: GovernmentSupportDocument[];
+  uploadingDocumentType: GovernmentSupportDocumentType | null;
+  onUpload: (
+    documentType: GovernmentSupportDocumentType,
+    file?: File
+  ) => void;
+  onOpen: (document: GovernmentSupportDocument) => void;
+  onDelete: (document: GovernmentSupportDocument) => void;
+}> = ({
+  transactionId,
+  documentType,
+  title,
+  description,
+  documents,
+  uploadingDocumentType,
+  onUpload,
+  onOpen,
+  onDelete
+}) => {
+  const matchingDocuments = documents.filter(
+    (document) => document.document_type === documentType
+  );
+  const isUploading = uploadingDocumentType === documentType;
+
+  return (
+    <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h4 className="text-sm font-semibold text-slate-900">{title}</h4>
+          <p className="mt-1 text-xs text-slate-500">{description}</p>
+        </div>
+        <label
+          className={`inline-flex cursor-pointer items-center justify-center rounded-lg border px-3 py-2 text-sm font-medium transition ${
+            transactionId
+              ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+              : 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+          }`}
+        >
+          <FileText className="mr-2 h-4 w-4" />
+          {isUploading ? 'Uploading...' : 'Upload'}
+          <input
+            type="file"
+            className="hidden"
+            disabled={!transactionId || isUploading}
+            accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              onUpload(documentType, file);
+              event.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+
+      {!transactionId && (
+        <p className="mt-3 text-xs text-amber-700">
+          Save the government transaction first before uploading documents.
+        </p>
+      )}
+
+      <div className="mt-3 space-y-2">
+        {matchingDocuments.map((document) => (
+          <div
+            key={document.id}
+            className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+          >
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-slate-900">
+                {document.file_name}
+              </p>
+              <p className="text-xs text-slate-500">
+                {(document.file_size / 1024).toFixed(1)} KB
+              </p>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => onOpen(document)}
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                onClick={() => onDelete(document)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        ))}
+
+        {matchingDocuments.length === 0 && transactionId && (
+          <p className="text-xs text-slate-500">No file uploaded yet.</p>
+        )}
       </div>
     </div>
   );
