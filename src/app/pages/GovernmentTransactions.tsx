@@ -5,13 +5,16 @@ import {
   CheckCircle2,
   ClipboardCheck,
   ClipboardList,
+  FileSignature,
   FileCheck2,
   FileText,
   Landmark,
   Pencil,
   Plus,
+  Printer,
   ReceiptText,
   Search,
+  Settings as SettingsIcon,
   Trash2
 } from 'lucide-react';
 import { Badge } from '../components/Badge';
@@ -23,8 +26,14 @@ import { Select } from '../components/Select';
 import { useAppContext, type Client, type Service } from '../context/AppContext';
 import { clientService } from '../services/clientService';
 import {
+  settingsService,
+  type ClinicSettings
+} from '../services/settingsService';
+import {
   governmentTransactionService,
   type GovernmentTransaction,
+  type GovernmentDocumentSettings,
+  type GovernmentDocumentSettingsInput,
   type GovernmentTransactionInput,
   type GovernmentTransactionItem,
   type GovernmentMasterRecord,
@@ -40,6 +49,7 @@ const statusDefinitions: {
   { id: 'referral_received', label: 'Referral Received', description: 'Referral letter from CSWD/LGU is encoded.' },
   { id: 'for_review', label: 'For Review', description: 'Clinic reviews requested service and client details.' },
   { id: 'costing_prepared', label: 'Costing Prepared', description: 'Tests, fee computation, and endorsement are ready.' },
+  { id: 'endorsement_ready', label: 'Endorsement Ready', description: 'Endorsement letter and costing statement are ready for LGU review.' },
   { id: 'guarantee_letter_received', label: 'Guarantee Letter', description: 'LGU guarantee letter details are recorded.' },
   { id: 'scheduled', label: 'Scheduled', description: 'Client has an appointment or test schedule.' },
   { id: 'service_completed', label: 'Service Completed', description: 'Tests or clinic service were completed.' },
@@ -84,12 +94,36 @@ const createEmptyForm = (): GovernmentTransactionInput => ({
   items: []
 });
 
+const createDefaultDocumentSettings = (): GovernmentDocumentSettingsInput => ({
+  header_line_1: '',
+  header_line_2: '',
+  header_line_3: '',
+  default_recipient_name: '',
+  default_recipient_title: '',
+  endorsement_signatory_name: 'Dr. Josevy A. Taguibao, RPsy, RGC, LPT',
+  endorsement_signatory_title: 'Psychologist, Service Provider',
+  endorsement_signatory_role: 'Psyzygy Psychological Center, Inc.',
+  prepared_by_name: 'Aprilyne D. Fabros, RPm',
+  prepared_by_title: 'Case Manager',
+  noted_by_name: 'Dr. Josevy A. Taguibao, RPsy, RGC, LPT',
+  noted_by_title: 'Psychologist, Service Provider',
+  endorsement_body:
+    'We respectfully endorse the client/beneficiary for psychological services based on the reviewed referral and the selected clinic services. The clinic will provide the necessary services with confidentiality, professionalism, and ethical care.',
+  costing_footer:
+    'Prepared for government guarantee letter processing and billing documentation.'
+});
+
 const currency = new Intl.NumberFormat('en-PH', {
   style: 'currency',
   currency: 'PHP'
 });
 
 const formatAmount = (amount: number) => currency.format(amount || 0);
+
+const formatDate = (dateValue?: string) => {
+  if (!dateValue) return new Date().toLocaleDateString();
+  return new Date(`${dateValue}T00:00:00`).toLocaleDateString();
+};
 
 const getStatusLabel = (status: GovernmentTransactionStatus) =>
   statusDefinitions.find((item) => item.id === status)?.label || status;
@@ -121,6 +155,10 @@ export const GovernmentTransactions: React.FC = () => {
   const [cswdOffices, setCswdOffices] = useState<GovernmentMasterRecord[]>([]);
   const [lguAgencies, setLguAgencies] = useState<GovernmentMasterRecord[]>([]);
   const [socialWorkers, setSocialWorkers] = useState<GovernmentSocialWorker[]>([]);
+  const [clinicSettings, setClinicSettings] = useState<ClinicSettings | null>(null);
+  const [documentSettingsId, setDocumentSettingsId] = useState('');
+  const [documentSettings, setDocumentSettings] =
+    useState<GovernmentDocumentSettingsInput>(createDefaultDocumentSettings);
   const [selectedTransaction, setSelectedTransaction] =
     useState<GovernmentTransaction | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -139,6 +177,10 @@ export const GovernmentTransactions: React.FC = () => {
   const [editingMasterRecord, setEditingMasterRecord] = useState<any>(null);
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
+  const [showDocumentSettingsModal, setShowDocumentSettingsModal] = useState(false);
+  const [showDocumentPreview, setShowDocumentPreview] = useState(false);
+  const [documentPreviewTransaction, setDocumentPreviewTransaction] =
+    useState<GovernmentTransaction | null>(null);
   const [selectedServiceId, setSelectedServiceId] = useState('');
   const [newClient, setNewClient] = useState({
     client_code: '',
@@ -203,15 +245,32 @@ export const GovernmentTransactions: React.FC = () => {
   };
 
   const loadMasterData = async () => {
-    const [cswd, lgu, workers] = await Promise.all([
+    const [cswd, lgu, workers, clinic, documentSettingsData] = await Promise.all([
       governmentTransactionService.listCswdOffices(),
       governmentTransactionService.listLguAgencies(),
-      governmentTransactionService.listSocialWorkers()
+      governmentTransactionService.listSocialWorkers(),
+      settingsService.getClinicSettings(),
+      governmentTransactionService.getDocumentSettings()
     ]);
 
     setCswdOffices(cswd);
     setLguAgencies(lgu);
     setSocialWorkers(workers);
+    setClinicSettings(clinic);
+
+    if (documentSettingsData) {
+      const {
+        id,
+        created_at,
+        updated_at,
+        ...settings
+      } = documentSettingsData;
+      setDocumentSettingsId(id);
+      setDocumentSettings(settings);
+    } else {
+      setDocumentSettingsId('');
+      setDocumentSettings(createDefaultDocumentSettings());
+    }
   };
 
   useEffect(() => {
@@ -489,6 +548,41 @@ export const GovernmentTransactions: React.FC = () => {
     setShowServiceModal(false);
   };
 
+  const saveDocumentSettings = async () => {
+    try {
+      const saved = await governmentTransactionService.saveDocumentSettings(
+        documentSettingsId || undefined,
+        documentSettings
+      );
+      const { id, created_at, updated_at, ...settings } = saved;
+      setDocumentSettingsId(id);
+      setDocumentSettings(settings);
+      setShowDocumentSettingsModal(false);
+      alert('Government document settings saved successfully.');
+    } catch (error: any) {
+      alert(`Error saving document settings: ${error.message}`);
+    }
+  };
+
+  const previewDocuments = (transaction: GovernmentTransaction) => {
+    setDocumentPreviewTransaction(transaction);
+    setShowDocumentPreview(true);
+  };
+
+  const printDocuments = () => {
+    window.print();
+  };
+
+  const markEndorsementReady = async (transaction: GovernmentTransaction) => {
+    const updated = await governmentTransactionService.updateTransaction(
+      transaction.id,
+      { status: 'endorsement_ready' }
+    );
+    setSelectedTransaction(updated);
+    setDocumentPreviewTransaction(updated);
+    await loadTransactions();
+  };
+
   const saveTransaction = async () => {
     if (!form.client_id && !form.client_name.trim()) {
       alert('Please select or add a client.');
@@ -557,10 +651,20 @@ export const GovernmentTransactions: React.FC = () => {
           </p>
         </div>
 
-        <Button onClick={openCreateForm}>
-          <Plus className="mr-2 h-4 w-4" />
-          New Government Transaction
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowDocumentSettingsModal(true)}
+          >
+            <SettingsIcon className="mr-2 h-4 w-4" />
+            Document Settings
+          </Button>
+          <Button onClick={openCreateForm}>
+            <Plus className="mr-2 h-4 w-4" />
+            New Government Transaction
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
@@ -604,6 +708,7 @@ export const GovernmentTransactions: React.FC = () => {
           transaction={selectedTransaction}
           onEdit={openEditForm}
           onAdvance={advanceStatus}
+          onPreviewDocuments={previewDocuments}
         />
       </div>
 
@@ -1338,6 +1443,74 @@ export const GovernmentTransactions: React.FC = () => {
           </Button>
         </div>
       </Modal>
+
+      <Modal
+        isOpen={showDocumentSettingsModal}
+        onClose={() => setShowDocumentSettingsModal(false)}
+        title="Government Document Settings"
+        size="xl"
+      >
+        <DocumentSettingsForm
+          settings={documentSettings}
+          onChange={setDocumentSettings}
+          onSave={saveDocumentSettings}
+          onCancel={() => setShowDocumentSettingsModal(false)}
+        />
+      </Modal>
+
+      <Modal
+        isOpen={showDocumentPreview}
+        onClose={() => setShowDocumentPreview(false)}
+        title="Endorsement & Costing Preview"
+        size="xl"
+      >
+        {documentPreviewTransaction && (
+          <div className="space-y-4">
+            <style>
+              {`
+                @media print {
+                  body * { visibility: hidden !important; }
+                  #government-documents, #government-documents * { visibility: visible !important; }
+                  #government-documents {
+                    position: absolute;
+                    inset: 0;
+                    width: 100%;
+                    background: white;
+                  }
+                  #government-documents section {
+                    page-break-after: always;
+                  }
+                }
+              `}
+            </style>
+            <div className="flex flex-wrap justify-end gap-2 print:hidden">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => markEndorsementReady(documentPreviewTransaction)}
+              >
+                <FileSignature className="mr-2 h-4 w-4" />
+                Mark as Endorsement Ready
+              </Button>
+              <Button type="button" onClick={printDocuments}>
+                <Printer className="mr-2 h-4 w-4" />
+                Print / Save PDF
+              </Button>
+            </div>
+            <GovernmentDocumentPreview
+              transaction={documentPreviewTransaction}
+              client={clients.find(
+                (client) => client.id === documentPreviewTransaction.client_id
+              )}
+              lguAgency={lguAgencies.find(
+                (agency) => agency.id === documentPreviewTransaction.lgu_agency_id
+              )}
+              clinicSettings={clinicSettings}
+              documentSettings={documentSettings}
+            />
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
@@ -1387,6 +1560,363 @@ const MasterSelect: React.FC<{
         <Pencil className="h-4 w-4" />
       </Button>
     </div>
+  </div>
+);
+
+const DocumentSettingsForm: React.FC<{
+  settings: GovernmentDocumentSettingsInput;
+  onChange: (settings: GovernmentDocumentSettingsInput) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}> = ({ settings, onChange, onSave, onCancel }) => {
+  const update = (field: keyof GovernmentDocumentSettingsInput, value: string) =>
+    onChange({ ...settings, [field]: value });
+
+  return (
+    <div className="space-y-5">
+      <FormSection
+        icon={<FileText className="h-5 w-5 text-teal-600" />}
+        title="Document Header"
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Input
+            label="Header Line 1"
+            value={settings.header_line_1}
+            onChange={(event) => update('header_line_1', event.target.value)}
+          />
+          <Input
+            label="Header Line 2"
+            value={settings.header_line_2}
+            onChange={(event) => update('header_line_2', event.target.value)}
+          />
+          <Input
+            label="Header Line 3"
+            value={settings.header_line_3}
+            onChange={(event) => update('header_line_3', event.target.value)}
+          />
+        </div>
+      </FormSection>
+
+      <FormSection
+        icon={<Landmark className="h-5 w-5 text-emerald-600" />}
+        title="Recipient Defaults"
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Input
+            label="Default Recipient Name"
+            value={settings.default_recipient_name}
+            onChange={(event) =>
+              update('default_recipient_name', event.target.value)
+            }
+          />
+          <Input
+            label="Default Recipient Title"
+            value={settings.default_recipient_title}
+            onChange={(event) =>
+              update('default_recipient_title', event.target.value)
+            }
+          />
+        </div>
+      </FormSection>
+
+      <FormSection
+        icon={<FileSignature className="h-5 w-5 text-blue-600" />}
+        title="Signatories"
+      >
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Input
+            label="Endorsement Signatory"
+            value={settings.endorsement_signatory_name}
+            onChange={(event) =>
+              update('endorsement_signatory_name', event.target.value)
+            }
+          />
+          <Input
+            label="Endorsement Signatory Title"
+            value={settings.endorsement_signatory_title}
+            onChange={(event) =>
+              update('endorsement_signatory_title', event.target.value)
+            }
+          />
+          <Input
+            label="Endorsement Signatory Role / Office"
+            value={settings.endorsement_signatory_role}
+            onChange={(event) =>
+              update('endorsement_signatory_role', event.target.value)
+            }
+          />
+          <Input
+            label="Prepared By"
+            value={settings.prepared_by_name}
+            onChange={(event) =>
+              update('prepared_by_name', event.target.value)
+            }
+          />
+          <Input
+            label="Prepared By Title"
+            value={settings.prepared_by_title}
+            onChange={(event) =>
+              update('prepared_by_title', event.target.value)
+            }
+          />
+          <Input
+            label="Noted By"
+            value={settings.noted_by_name}
+            onChange={(event) => update('noted_by_name', event.target.value)}
+          />
+          <Input
+            label="Noted By Title"
+            value={settings.noted_by_title}
+            onChange={(event) => update('noted_by_title', event.target.value)}
+          />
+        </div>
+      </FormSection>
+
+      <FormSection
+        icon={<ClipboardList className="h-5 w-5 text-violet-600" />}
+        title="Standard Text"
+      >
+        <div className="space-y-4">
+          <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">
+              Endorsement Body
+            </label>
+            <textarea
+              rows={4}
+              value={settings.endorsement_body}
+              onChange={(event) =>
+                update('endorsement_body', event.target.value)
+              }
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+          <Input
+            label="Costing Footer"
+            value={settings.costing_footer}
+            onChange={(event) => update('costing_footer', event.target.value)}
+          />
+        </div>
+      </FormSection>
+
+      <div className="flex justify-end gap-2 border-t border-slate-200 pt-4">
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="button" onClick={onSave}>
+          Save Document Settings
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+const GovernmentDocumentPreview: React.FC<{
+  transaction: GovernmentTransaction;
+  client?: Client;
+  lguAgency?: GovernmentMasterRecord;
+  clinicSettings: ClinicSettings | null;
+  documentSettings: GovernmentDocumentSettingsInput;
+}> = ({
+  transaction,
+  client,
+  lguAgency,
+  clinicSettings,
+  documentSettings
+}) => {
+  const clientName = client?.full_name || transaction.client_name;
+  const clientAddress = client?.address || '-';
+  const clientAge = client?.age ? `${client.age} years old` : '-';
+  const clientSex = client?.sex || '-';
+  const recipientName =
+    lguAgency?.contact_person || documentSettings.default_recipient_name || '-';
+  const recipientTitle =
+    documentSettings.default_recipient_title || 'Authorized Representative';
+  const recipientOffice = transaction.lgu_name || lguAgency?.name || '-';
+  const recipientAddress = lguAgency?.address || '-';
+  const headerLines = [
+    documentSettings.header_line_1,
+    documentSettings.header_line_2,
+    documentSettings.header_line_3
+  ].filter(Boolean);
+  const serviceItems = transaction.items?.length
+    ? transaction.items
+    : [{
+        service_name: transaction.selected_tests || 'Selected Services',
+        quantity: 1,
+        unit_price: transaction.computed_fee || 0,
+        line_total: transaction.computed_fee || 0,
+        service_id: ''
+      }];
+  const total = serviceItems.reduce(
+    (sum, item) => sum + Number(item.line_total || 0),
+    0
+  );
+
+  return (
+    <div id="government-documents" className="space-y-6 print:space-y-0">
+      <DocumentPage>
+        <DocumentHeader
+          clinicSettings={clinicSettings}
+          headerLines={headerLines}
+        />
+        <h2 className="mt-8 text-center text-xl font-semibold">
+          Endorsement Letter
+        </h2>
+        <div className="mt-6 space-y-1 text-sm">
+          <p>Date: {formatDate(transaction.referral_date)}</p>
+          <p>{recipientName}</p>
+          <p>{recipientTitle}</p>
+          <p>{recipientOffice}</p>
+          <p>{recipientAddress}</p>
+        </div>
+        <p className="mt-5 text-sm font-semibold">
+          Subject: Endorsement of Client/Beneficiary for Psychological Services
+        </p>
+        <p className="mt-5 text-sm">Dear {recipientName},</p>
+        <p className="mt-4 whitespace-pre-line text-sm leading-7">
+          {documentSettings.endorsement_body}
+        </p>
+        <div className="mt-5 rounded-lg border border-slate-200 p-4 text-sm">
+          <p><strong>Name of Client/Beneficiary:</strong> {clientName}</p>
+          <p><strong>Age:</strong> {clientAge}</p>
+          <p><strong>Sex:</strong> {clientSex}</p>
+          <p><strong>Address:</strong> {clientAddress}</p>
+          <p><strong>Referral Reference:</strong> {transaction.referral_letter_reference || '-'}</p>
+          <p><strong>Referral Concern / Selected Services:</strong> {transaction.selected_tests || '-'}</p>
+        </div>
+        <p className="mt-6 text-sm leading-7">
+          Thank you for your continued partnership in supporting accessible
+          psychological services for the community.
+        </p>
+        <div className="mt-12 text-sm">
+          <p>Respectfully yours,</p>
+          <div className="mt-10">
+            <p className="font-semibold">
+              {documentSettings.endorsement_signatory_name || '-'}
+            </p>
+            <p>{documentSettings.endorsement_signatory_title || '-'}</p>
+            <p>{documentSettings.endorsement_signatory_role || clinicSettings?.clinic_name || '-'}</p>
+          </div>
+        </div>
+      </DocumentPage>
+
+      <DocumentPage>
+        <DocumentHeader
+          clinicSettings={clinicSettings}
+          headerLines={headerLines}
+        />
+        <h2 className="mt-8 text-center text-xl font-semibold">
+          Costing Statement
+        </h2>
+        <div className="mt-6 grid grid-cols-2 gap-2 text-sm">
+          <p><strong>Name:</strong> {clientName}</p>
+          <p><strong>Client No.:</strong> {client?.client_code || '-'}</p>
+          <p className="col-span-2"><strong>Address:</strong> {clientAddress}</p>
+        </div>
+        <table className="mt-6 w-full border-collapse text-sm">
+          <thead>
+            <tr className="bg-slate-100">
+              <th className="border border-slate-300 px-3 py-2 text-left">
+                Psychological Services
+              </th>
+              <th className="border border-slate-300 px-3 py-2 text-right">
+                Session(s)
+              </th>
+              <th className="border border-slate-300 px-3 py-2 text-right">
+                Amount
+              </th>
+              <th className="border border-slate-300 px-3 py-2 text-right">
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {serviceItems.map((item, index) => (
+              <tr key={`${item.service_id}-${index}`}>
+                <td className="border border-slate-300 px-3 py-2">
+                  {item.service_name}
+                </td>
+                <td className="border border-slate-300 px-3 py-2 text-right">
+                  {item.quantity}
+                </td>
+                <td className="border border-slate-300 px-3 py-2 text-right">
+                  {formatAmount(item.unit_price)}
+                </td>
+                <td className="border border-slate-300 px-3 py-2 text-right">
+                  {formatAmount(item.line_total)}
+                </td>
+              </tr>
+            ))}
+            <tr>
+              <td
+                colSpan={3}
+                className="border border-slate-300 px-3 py-2 text-right font-semibold"
+              >
+                Total
+              </td>
+              <td className="border border-slate-300 px-3 py-2 text-right font-semibold">
+                {formatAmount(total)}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        {documentSettings.costing_footer && (
+          <p className="mt-4 text-sm text-slate-600">
+            {documentSettings.costing_footer}
+          </p>
+        )}
+        <div className="mt-14 grid grid-cols-2 gap-12 text-sm">
+          <div>
+            <p>Prepared by:</p>
+            <div className="mt-10">
+              <p className="font-semibold">{documentSettings.prepared_by_name || '-'}</p>
+              <p>{documentSettings.prepared_by_title || '-'}</p>
+            </div>
+          </div>
+          <div>
+            <p>Noted by:</p>
+            <div className="mt-10">
+              <p className="font-semibold">{documentSettings.noted_by_name || '-'}</p>
+              <p>{documentSettings.noted_by_title || '-'}</p>
+            </div>
+          </div>
+        </div>
+      </DocumentPage>
+    </div>
+  );
+};
+
+const DocumentPage: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <section className="mx-auto min-h-[980px] max-w-[816px] rounded-lg border border-slate-200 bg-white p-10 shadow-sm print:min-h-screen print:max-w-none print:rounded-none print:border-0 print:p-8 print:shadow-none">
+    {children}
+  </section>
+);
+
+const DocumentHeader: React.FC<{
+  clinicSettings: ClinicSettings | null;
+  headerLines: string[];
+}> = ({ clinicSettings, headerLines }) => (
+  <div className="border-b border-slate-200 pb-4 text-center text-xs leading-5 text-slate-700">
+    {clinicSettings?.show_logo && clinicSettings?.logo_url && (
+      <img
+        src={clinicSettings.logo_url}
+        alt="Clinic logo"
+        className="mx-auto mb-2 h-16 w-16 object-contain"
+      />
+    )}
+    <p className="text-base font-semibold text-slate-900">
+      {clinicSettings?.clinic_name || 'Psyzygy Psychological Center'}
+    </p>
+    {headerLines.length > 0 ? (
+      headerLines.map((line) => <p key={line}>{line}</p>)
+    ) : (
+      <>
+        {clinicSettings?.address && <p>{clinicSettings.address}</p>}
+        {clinicSettings?.contact_number && <p>{clinicSettings.contact_number}</p>}
+        {clinicSettings?.email && <p>{clinicSettings.email}</p>}
+        {clinicSettings?.website && <p>{clinicSettings.website}</p>}
+      </>
+    )}
   </div>
 );
 
@@ -1499,7 +2029,8 @@ const TransactionDetails: React.FC<{
   transaction: GovernmentTransaction | null;
   onEdit: (transaction: GovernmentTransaction) => void;
   onAdvance: (transaction: GovernmentTransaction) => void;
-}> = ({ transaction, onEdit, onAdvance }) => (
+  onPreviewDocuments: (transaction: GovernmentTransaction) => void;
+}> = ({ transaction, onEdit, onAdvance, onPreviewDocuments }) => (
   <Card className="p-5">
     {transaction ? (
       <div className="space-y-5">
@@ -1587,6 +2118,10 @@ const TransactionDetails: React.FC<{
           <Button variant="outline" onClick={() => onEdit(transaction)}>
             <Pencil className="mr-2 h-4 w-4" />
             Edit File
+          </Button>
+          <Button variant="outline" onClick={() => onPreviewDocuments(transaction)}>
+            <FileSignature className="mr-2 h-4 w-4" />
+            Generate Endorsement & Costing
           </Button>
           {getNextStatus(transaction.status) && (
             <Button onClick={() => onAdvance(transaction)}>

@@ -4,6 +4,7 @@ export type GovernmentTransactionStatus =
   | 'referral_received'
   | 'for_review'
   | 'costing_prepared'
+  | 'endorsement_ready'
   | 'guarantee_letter_received'
   | 'scheduled'
   | 'service_completed'
@@ -86,6 +87,31 @@ export interface GovernmentSocialWorker {
   created_at?: string;
   updated_at?: string;
 }
+
+export interface GovernmentDocumentSettings {
+  id: string;
+  header_line_1: string;
+  header_line_2: string;
+  header_line_3: string;
+  default_recipient_name: string;
+  default_recipient_title: string;
+  endorsement_signatory_name: string;
+  endorsement_signatory_title: string;
+  endorsement_signatory_role: string;
+  prepared_by_name: string;
+  prepared_by_title: string;
+  noted_by_name: string;
+  noted_by_title: string;
+  endorsement_body: string;
+  costing_footer: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export type GovernmentDocumentSettingsInput = Omit<
+  GovernmentDocumentSettings,
+  'id' | 'created_at' | 'updated_at'
+>;
 
 const storageKey = 'psyzygy_government_transactions';
 
@@ -480,5 +506,43 @@ export const governmentTransactionService = {
 
     if (error) throw error;
     return data as GovernmentSocialWorker;
+  },
+
+  async getDocumentSettings() {
+    const { data, error } = await supabase
+      .from('government_document_settings')
+      .select('*')
+      .limit(1)
+      .maybeSingle();
+
+    if (error && isMissingTableError(error)) return null;
+    if (error) throw error;
+    return data as GovernmentDocumentSettings | null;
+  },
+
+  async saveDocumentSettings(
+    id: string | undefined,
+    settings: GovernmentDocumentSettingsInput
+  ) {
+    if (id) {
+      const { data, error } = await supabase
+        .from('government_document_settings')
+        .update(settings)
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data as GovernmentDocumentSettings;
+    }
+
+    const { data, error } = await supabase
+      .from('government_document_settings')
+      .insert(settings)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data as GovernmentDocumentSettings;
   }
 };
